@@ -214,6 +214,8 @@ py_Type g_box_type = -1;
 py_Type g_hashtab_type = -1;
 py_Type g_linklist_type = -1;
 py_Type g_buffer_type = -1;
+py_Type g_clock_type = -1;
+py_Type g_outlet_type = -1;
 
 // Forward declarations for utility functions
 static bool py_to_atom(py_Ref py_val, t_atom* atom);

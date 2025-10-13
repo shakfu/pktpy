@@ -15,9 +15,6 @@ typedef struct {
     bool owns_outlet;
 } OutletObject;
 
-// Global type
-py_Type g_outlet_type;
-
 // Outlet.__new__
 static bool Outlet__new__(int argc, py_Ref argv) {
     py_newobject(py_retval(), g_outlet_type, 0, sizeof(OutletObject));

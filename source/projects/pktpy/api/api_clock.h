@@ -17,9 +17,6 @@ typedef struct {
     void* owner;      // Store owner object pointer
 } ClockObject;
 
-// Global type
-py_Type g_clock_type;
-
 // Clock callback function - bridges C to Python
 static void clock_callback_bridge(ClockObject* clock_obj) {
     if (clock_obj == NULL || clock_obj->callback == NULL) return;
