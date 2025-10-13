@@ -93,6 +93,48 @@ for i in range(len(arr)):
     print(arr[i])
 ```
 
+## Dictionaries
+
+```python
+# Create
+d = api.Dictionary()                # Empty dictionary
+
+# Access (keys must be strings)
+d["key"] = 100                      # Set value
+value = d["key"]                    # Get value
+value = d.get("key", default)       # Get with default
+
+# Length and membership
+len(d)                              # Number of entries
+"key" in d                          # Check if key exists
+d.has_key("key")                    # Alternative check
+
+# Keys
+keys = d.keys()                     # Get all keys as list
+
+# Typed getters (with optional defaults)
+d.getlong("key", 0)                 # Get as long
+d.getfloat("key", 0.0)              # Get as float
+d.getstring("key", "")              # Get as string
+
+# Modify
+d["key"] = value                    # Set/update
+d.delete("key")                     # Remove entry
+d.clear()                           # Remove all
+
+# File I/O (JSON)
+d.read(filename, path)              # Load from file
+d.write(filename, path)             # Save to file
+
+# Debug
+d.dump()                            # Print to console
+d.dump(recurse=True, console=False) # With options
+
+# Nested structures
+d["sub"] = api.Dictionary()         # Nested dict
+d["arr"] = [1, 2, 3]                # Stored as AtomArray
+```
+
 ## Common Patterns
 
 ### Message Router
@@ -145,6 +187,29 @@ atoms = [api.Atom(x) for x in [1, 2, 3]]
 
 for a in atoms:
     api.post(f"{a.type}: {a.value}\n")
+```
+
+### Dictionary Configuration
+
+```python
+# Create configuration dictionary
+config = api.Dictionary()
+config["sample_rate"] = 44100
+config["buffer_size"] = 512
+config["enabled"] = 1
+
+# Nested settings
+audio = api.Dictionary()
+audio["device"] = "Built-in"
+audio["channels"] = 2
+config["audio"] = audio
+
+# Access nested
+device = config["audio"]["device"]
+
+# Save/load
+config.write("settings.json", 0)
+config.read("settings.json", 0)
 ```
 
 ## Full Example

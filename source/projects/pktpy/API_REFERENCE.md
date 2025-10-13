@@ -258,6 +258,202 @@ print(float(atom))   # 42.0
 
 ---
 
+### api.Dictionary
+
+Wrapper for Max's `t_dictionary` type. Dictionaries store key-value pairs where keys are strings and values can be any supported type (int, float, string, Atom, AtomArray, or nested Dictionary).
+
+#### Constructor
+
+```python
+Dictionary()     # Create empty dictionary
+```
+
+#### Magic Methods
+
+- `__len__()`: Returns number of entries (enables `len(dict)`)
+- `__getitem__(key)`: Get value by key (enables `dict[key]`)
+- `__setitem__(key, value)`: Set value by key (enables `dict[key] = value`)
+- `__contains__(key)`: Check if key exists (enables `key in dict`)
+- `__repr__()`: Returns string representation like `Dictionary(entries=N)`
+
+#### Methods
+
+**Key Operations:**
+- `keys()`: Returns list of all keys
+- `has_key(key)`: Returns True if key exists
+- `get(key, default=None)`: Get value with optional default
+
+**Typed Getters:**
+- `getlong(key, default=0)`: Get value as long integer
+- `getfloat(key, default=0.0)`: Get value as float
+- `getstring(key, default="")`: Get value as string
+
+**Modification:**
+- `delete(key)`: Remove entry by key
+- `clear()`: Remove all entries
+
+**File I/O:**
+- `read(filename, path)`: Load dictionary from JSON file
+- `write(filename, path)`: Save dictionary to JSON file
+
+**Debug:**
+- `dump(recurse=True, console=False)`: Print dictionary contents to Max console
+
+#### Supported Value Types
+
+Dictionary values can be:
+- `int` → stored as long
+- `float` → stored as float
+- `str` → stored as string
+- `list` → stored as AtomArray (of convertible items)
+- `api.Atom` → stored as atom
+- `api.Symbol` → stored as symbol
+- `api.AtomArray` → stored as atomarray (dictionary takes ownership)
+- `api.Dictionary` → stored as nested dictionary (parent takes ownership)
+
+#### Examples
+
+**Basic Usage:**
+
+```python
+import api
+
+# Create and populate
+d = api.Dictionary()
+d["name"] = "oscillator"
+d["frequency"] = 440.0
+d["amplitude"] = 0.5
+d["enabled"] = 1
+
+# Access values
+print(d["frequency"])           # 440.0
+print(len(d))                   # 4
+print("name" in d)              # True
+
+# With defaults
+amp = d.get("amplitude", 1.0)   # 0.5
+gain = d.get("gain", 0.8)       # 0.8 (not in dict)
+
+# Typed getters
+freq = d.getfloat("frequency")  # 440.0
+enabled = d.getlong("enabled")  # 1
+name = d.getstring("name")      # "oscillator"
+```
+
+**Nested Dictionaries:**
+
+```python
+# Create nested structure
+config = api.Dictionary()
+
+audio = api.Dictionary()
+audio["sample_rate"] = 44100
+audio["buffer_size"] = 512
+config["audio"] = audio
+
+midi = api.Dictionary()
+midi["channel"] = 1
+midi["velocity"] = 100
+config["midi"] = midi
+
+# Access nested values
+sr = config["audio"]["sample_rate"]      # 44100
+channel = config["midi"]["channel"]       # 1
+
+# Iterate keys
+for key in config.keys():
+    api.post(f"Section: {key}\n")
+```
+
+**Lists and Arrays:**
+
+```python
+d = api.Dictionary()
+
+# Store Python list (becomes AtomArray internally)
+d["values"] = [1, 2, 3, 4, 5]
+d["mixed"] = [10, 3.14, "text"]
+
+# Store AtomArray explicitly
+arr = api.AtomArray([10, 20, 30])
+d["array"] = arr.duplicate()  # Duplicate first, as dict takes ownership
+```
+
+**File Persistence:**
+
+```python
+# Create configuration
+settings = api.Dictionary()
+settings["theme"] = "dark"
+settings["font_size"] = 12
+settings["auto_save"] = 1
+
+# Save to file (path=0 for default Max search path)
+settings.write("my_settings.json", 0)
+
+# Load from file
+loaded = api.Dictionary()
+loaded.read("my_settings.json", 0)
+
+theme = loaded.getstring("theme")  # "dark"
+```
+
+**Iteration:**
+
+```python
+config = api.Dictionary()
+config["a"] = 1
+config["b"] = 2.5
+config["c"] = "text"
+
+# Iterate over keys
+for key in config.keys():
+    value = config[key]
+    api.post(f"{key}: {value}\n")
+
+# Check and delete
+if config.has_key("b"):
+    config.delete("b")
+
+# Clear all
+config.clear()
+print(len(config))  # 0
+```
+
+**Debug Output:**
+
+```python
+d = api.Dictionary()
+d["int"] = 42
+d["float"] = 3.14
+d["string"] = "hello"
+
+# Print to Max console
+d.dump()
+
+# Print recursively to system console
+d.dump(recurse=True, console=True)
+```
+
+#### Ownership Notes
+
+When storing AtomArray or nested Dictionary objects, the parent dictionary takes ownership:
+
+```python
+arr = api.AtomArray([1, 2, 3])
+d = api.Dictionary()
+
+# After this, d owns arr - don't free arr separately
+d["data"] = arr
+
+# To keep using arr, duplicate it first:
+arr = api.AtomArray([1, 2, 3])
+d["data"] = arr.duplicate()
+# Now you can still use arr
+```
+
+---
+
 ## Console Functions
 
 ### api.post(str)
