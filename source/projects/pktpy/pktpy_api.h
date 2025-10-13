@@ -1,7 +1,7 @@
-// pktpy2_api.h
+// pktpy_api.h
 
-#ifndef PKTPY2_API_H
-#define PKTPY2_API_H
+#ifndef PKTPY_API_H
+#define PKTPY_API_H
 
 // ----------------------------------------------------------------------------
 // includes
@@ -269,8 +269,8 @@ bool api_module_initialize(void) {
     py_bind(mod, "print_args(*args)", print_args);
 
     py_Type type = py_newtype("Person", tp_object, mod, NULL);
-    // py_bindmagic(type, __new__, Person__new__);
-    // py_bindmagic(type, __init__, Person__init__);
+    py_bindmethod(type, "__new__", Person__new__);
+    py_bindmethod(type, "__init__", Person__init__);
     py_bindproperty(type, "id", Person__id, Person__set_id);
     py_bindproperty(type, "age", Person__age, Person__set_age);
 
@@ -290,4 +290,4 @@ bool api_module_initialize(void) {
 
 // ----------------------------------------------------------------------------
 
-#endif // PKTPY2_API_H
+#endif // PKTPY_API_H
