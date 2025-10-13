@@ -28,6 +28,9 @@
 // Max linklist
 #include "ext_linklist.h"
 
+// MSP buffer
+#include "ext_buffer.h"
+
 // ----------------------------------------------------------------------------
 // custom pktpy2 functions
 
@@ -193,6 +196,7 @@ static py_Type g_patcher_type = -1;
 static py_Type g_box_type = -1;
 static py_Type g_hashtab_type = -1;
 static py_Type g_linklist_type = -1;
+static py_Type g_buffer_type = -1;
 
 // Forward declarations for utility functions
 static bool py_to_atom(py_Ref py_val, t_atom* atom);
@@ -2170,6 +2174,439 @@ static bool Patcher_count(int argc, py_Ref argv) {
     return true;
 }
 
+// Method: get_firstline()
+static bool Patcher_get_firstline(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_object* line = jpatcher_get_firstline(self->patcher);
+
+    if (!line) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    // Return as integer pointer for now
+    // Could wrap in Patchline object if type is registered
+    py_newint(py_retval(), (py_i64)line);
+    return true;
+}
+
+// Method: get_name()
+static bool Patcher_get_name(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_symbol* name = jpatcher_get_name(self->patcher);
+
+    if (!name) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    py_newstr(py_retval(), name->s_name);
+    return true;
+}
+
+// Method: get_filepath()
+static bool Patcher_get_filepath(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_symbol* filepath = jpatcher_get_filepath(self->patcher);
+
+    if (!filepath) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    py_newstr(py_retval(), filepath->s_name);
+    return true;
+}
+
+// Method: get_filename()
+static bool Patcher_get_filename(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_symbol* filename = jpatcher_get_filename(self->patcher);
+
+    if (!filename) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    py_newstr(py_retval(), filename->s_name);
+    return true;
+}
+
+// Method: get_boxes()
+// Returns a Linklist of all boxes in the patcher
+static bool Patcher_get_boxes(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    if (g_linklist_type < 0) {
+        return RuntimeError("Linklist type not initialized");
+    }
+
+    // Create a new Linklist to hold the boxes
+    t_linklist* list = linklist_new();
+    t_object* box = jpatcher_get_firstobject(self->patcher);
+
+    while (box) {
+        linklist_append(list, box);
+        object_method(box, gensym("getnextobject"), &box);
+    }
+
+    // Wrap in Linklist object
+    // Note: We use manual offsetof since LinklistObject is defined later in the file
+    void* wrapper = py_newobject(py_retval(), g_linklist_type, 0, sizeof(t_linklist*) + sizeof(bool));
+    *((t_linklist**)wrapper) = list;  // Set linklist field
+    *((bool*)((char*)wrapper + sizeof(t_linklist*))) = true;  // Set owns_linklist field
+
+    return true;
+}
+
+// Method: get_lines()
+// Returns a Linklist of all patchlines in the patcher
+static bool Patcher_get_lines(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    if (g_linklist_type < 0) {
+        return RuntimeError("Linklist type not initialized");
+    }
+
+    // Create a new Linklist to hold the lines
+    t_linklist* list = linklist_new();
+    t_object* line = jpatcher_get_firstline(self->patcher);
+
+    while (line) {
+        linklist_append(list, line);
+        object_method(line, gensym("getnextline"), &line);
+    }
+
+    // Wrap in Linklist object
+    // Note: We use manual offsetof since LinklistObject is defined later in the file
+    void* wrapper = py_newobject(py_retval(), g_linklist_type, 0, sizeof(t_linklist*) + sizeof(bool));
+    *((t_linklist**)wrapper) = list;  // Set linklist field
+    *((bool*)((char*)wrapper + sizeof(t_linklist*))) = true;  // Set owns_linklist field
+
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
+// Patchline wrapper - Wrapper for Max patchline (patch cord) objects
+
+typedef struct {
+    t_object* patchline;
+    bool owns_patchline;
+} PatchlineObject;
+
+static py_Type g_patchline_type = -1;
+
+static bool Patchline__new__(int argc, py_Ref argv) {
+    py_Type cls = py_totype(argv);
+    PatchlineObject* wrapper = py_newobject(py_retval(), cls, 0, sizeof(PatchlineObject));
+    wrapper->patchline = NULL;
+    wrapper->owns_patchline = false;
+    return true;
+}
+
+static bool Patchline__init__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    py_newnone(py_retval());
+    return true;
+}
+
+static void Patchline__del__(void* self) {
+    PatchlineObject* wrapper = (PatchlineObject*)self;
+    // Patchlines are typically not owned by Python wrappers
+    wrapper->patchline = NULL;
+}
+
+static bool Patchline__repr__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+
+    char buf[256];
+    if (self->patchline) {
+        snprintf(buf, sizeof(buf), "Patchline(%p)", self->patchline);
+    } else {
+        snprintf(buf, sizeof(buf), "Patchline(null)");
+    }
+    py_newstr(py_retval(), buf);
+    return true;
+}
+
+// Method: wrap(pointer)
+static bool Patchline_wrap(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    py_i64 ptr = py_toint(py_arg(1));
+    if (ptr == 0) {
+        return ValueError("Cannot wrap null pointer");
+    }
+
+    self->patchline = (t_object*)ptr;
+    self->owns_patchline = false;
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: is_null()
+static bool Patchline_is_null(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+    py_newbool(py_retval(), self->patchline == NULL);
+    return true;
+}
+
+// Method: get_box1()
+// Returns the source box (where the patchline originates)
+static bool Patchline_get_box1(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patchline) {
+        return RuntimeError("Patchline is null");
+    }
+
+    if (g_box_type < 0) {
+        return RuntimeError("Box type not initialized");
+    }
+
+    t_object* box = jpatchline_get_box1(self->patchline);
+
+    if (!box) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    // Note: We use manual offsetof since BoxObject is defined earlier in the file
+    void* wrapper = py_newobject(py_retval(), g_box_type, 0, sizeof(t_object*) + sizeof(bool));
+    *((t_object**)wrapper) = box;  // Set box field
+    *((bool*)((char*)wrapper + sizeof(t_object*))) = false;  // Set owns_box field
+
+    return true;
+}
+
+// Method: get_box2()
+// Returns the destination box (where the patchline connects to)
+static bool Patchline_get_box2(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patchline) {
+        return RuntimeError("Patchline is null");
+    }
+
+    if (g_box_type < 0) {
+        return RuntimeError("Box type not initialized");
+    }
+
+    t_object* box = jpatchline_get_box2(self->patchline);
+
+    if (!box) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    // Note: We use manual offsetof since BoxObject is defined earlier in the file
+    void* wrapper = py_newobject(py_retval(), g_box_type, 0, sizeof(t_object*) + sizeof(bool));
+    *((t_object**)wrapper) = box;  // Set box field
+    *((bool*)((char*)wrapper + sizeof(t_object*))) = false;  // Set owns_box field
+
+    return true;
+}
+
+// Method: get_outletnum()
+// Returns the outlet number of the source box
+static bool Patchline_get_outletnum(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patchline) {
+        return RuntimeError("Patchline is null");
+    }
+
+    long outletnum = jpatchline_get_outletnum(self->patchline);
+    py_newint(py_retval(), outletnum);
+    return true;
+}
+
+// Method: get_inletnum()
+// Returns the inlet number of the destination box
+static bool Patchline_get_inletnum(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patchline) {
+        return RuntimeError("Patchline is null");
+    }
+
+    long inletnum = jpatchline_get_inletnum(self->patchline);
+    py_newint(py_retval(), inletnum);
+    return true;
+}
+
+// Method: get_startpoint()
+// Returns [x, y] of the patchline start point
+static bool Patchline_get_startpoint(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patchline) {
+        return RuntimeError("Patchline is null");
+    }
+
+    double x, y;
+    t_max_err err = jpatchline_get_startpoint(self->patchline, &x, &y);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to get startpoint");
+    }
+
+    py_newlistn(py_retval(), 2);
+    py_Ref item0 = py_list_getitem(py_retval(), 0);
+    py_Ref item1 = py_list_getitem(py_retval(), 1);
+    py_newfloat(item0, x);
+    py_newfloat(item1, y);
+
+    return true;
+}
+
+// Method: get_endpoint()
+// Returns [x, y] of the patchline end point
+static bool Patchline_get_endpoint(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patchline) {
+        return RuntimeError("Patchline is null");
+    }
+
+    double x, y;
+    t_max_err err = jpatchline_get_endpoint(self->patchline, &x, &y);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to get endpoint");
+    }
+
+    py_newlistn(py_retval(), 2);
+    py_Ref item0 = py_list_getitem(py_retval(), 0);
+    py_Ref item1 = py_list_getitem(py_retval(), 1);
+    py_newfloat(item0, x);
+    py_newfloat(item1, y);
+
+    return true;
+}
+
+// Method: get_hidden()
+// Returns whether the patchline is hidden
+static bool Patchline_get_hidden(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patchline) {
+        return RuntimeError("Patchline is null");
+    }
+
+    char hidden = jpatchline_get_hidden(self->patchline);
+    py_newbool(py_retval(), hidden != 0);
+    return true;
+}
+
+// Method: set_hidden(hidden)
+// Set whether the patchline is hidden
+static bool Patchline_set_hidden(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_bool);
+
+    if (!self->patchline) {
+        return RuntimeError("Patchline is null");
+    }
+
+    char hidden = py_tobool(py_arg(1)) ? 1 : 0;
+    t_max_err err = jpatchline_set_hidden(self->patchline, hidden);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to set hidden");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: get_nextline()
+// Get the next patchline in the linked list
+static bool Patchline_get_nextline(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patchline) {
+        return RuntimeError("Patchline is null");
+    }
+
+    t_object* nextline = jpatchline_get_nextline(self->patchline);
+
+    if (!nextline) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    if (g_patchline_type < 0) {
+        return RuntimeError("Patchline type not initialized");
+    }
+
+    // Note: We use manual offsetof since PatchlineObject is the current struct
+    void* wrapper = py_newobject(py_retval(), g_patchline_type, 0, sizeof(t_object*) + sizeof(bool));
+    *((t_object**)wrapper) = nextline;  // Set patchline field
+    *((bool*)((char*)wrapper + sizeof(t_object*))) = false;  // Set owns_patchline field
+
+    return true;
+}
+
+// Method: pointer()
+static bool Patchline_pointer(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatchlineObject* self = py_touserdata(py_arg(0));
+
+    py_i64 ptr = (py_i64)self->patchline;
+    py_newint(py_retval(), ptr);
+    return true;
+}
+
 
 // ----------------------------------------------------------------------------
 // Hashtab wrapper - Wrapper for Max hashtable objects
@@ -3604,6 +4041,520 @@ static bool Outlet_pointer(int argc, py_Ref argv) {
 
 
 // ----------------------------------------------------------------------------
+// Buffer wrapper - Wrapper for MSP buffer~ objects
+
+typedef struct {
+    t_buffer_ref* buffer_ref;
+    bool owns_ref;
+} BufferObject;
+
+static bool Buffer__new__(int argc, py_Ref argv) {
+    py_Type cls = py_totype(argv);
+    BufferObject* wrapper = py_newobject(py_retval(), cls, 0, sizeof(BufferObject));
+    wrapper->buffer_ref = NULL;
+    wrapper->owns_ref = false;
+    return true;
+}
+
+static bool Buffer__init__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    py_newnone(py_retval());
+    return true;
+}
+
+static void Buffer__del__(void* self) {
+    BufferObject* wrapper = (BufferObject*)self;
+    if (wrapper->owns_ref && wrapper->buffer_ref) {
+        object_free(wrapper->buffer_ref);
+        wrapper->buffer_ref = NULL;
+    }
+}
+
+static bool Buffer__repr__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    char buf[256];
+    if (self->buffer_ref) {
+        t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+        if (obj) {
+            t_buffer_info info;
+            buffer_getinfo(obj, &info);
+            snprintf(buf, sizeof(buf), "Buffer(name='%s', frames=%ld, channels=%ld)",
+                     info.b_name ? info.b_name->s_name : "unknown",
+                     info.b_frames, info.b_nchans);
+        } else {
+            snprintf(buf, sizeof(buf), "Buffer(no object)");
+        }
+    } else {
+        snprintf(buf, sizeof(buf), "Buffer(null)");
+    }
+    py_newstr(py_retval(), buf);
+    return true;
+}
+
+// Method: ref_new(owner_ptr, name)
+// Create a new buffer reference
+static bool Buffer_ref_new(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    BufferObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);   // owner pointer
+    PY_CHECK_ARG_TYPE(2, tp_str);   // buffer name
+
+    py_i64 owner_ptr = py_toint(py_arg(1));
+    const char* name_str = py_tostr(py_arg(2));
+
+    t_object* owner = (t_object*)owner_ptr;
+    t_symbol* name = gensym(name_str);
+
+    // Free existing ref if we own it
+    if (self->owns_ref && self->buffer_ref) {
+        object_free(self->buffer_ref);
+    }
+
+    self->buffer_ref = buffer_ref_new(owner, name);
+    self->owns_ref = true;
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: ref_set(name)
+// Change buffer reference to different buffer
+static bool Buffer_ref_set(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    BufferObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null - call ref_new() first");
+    }
+
+    const char* name_str = py_tostr(py_arg(1));
+    t_symbol* name = gensym(name_str);
+
+    buffer_ref_set(self->buffer_ref, name);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: exists()
+// Check if buffer exists
+static bool Buffer_exists(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        py_newbool(py_retval(), false);
+        return true;
+    }
+
+    t_atom_long exists = buffer_ref_exists(self->buffer_ref);
+    py_newbool(py_retval(), exists != 0);
+    return true;
+}
+
+// Method: getobject()
+// Get buffer object pointer
+static bool Buffer_getobject(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+
+    if (!obj) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    py_newint(py_retval(), (py_i64)obj);
+    return true;
+}
+
+// Method: getinfo()
+// Get buffer information as dictionary
+static bool Buffer_getinfo(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    t_buffer_info info;
+    t_max_err err = buffer_getinfo(obj, &info);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to get buffer info");
+    }
+
+    // Return as Python dict (using list for simplicity)
+    py_newlistn(py_retval(), 10);
+
+    py_Ref item0 = py_list_getitem(py_retval(), 0);
+    py_newstr(item0, info.b_name ? info.b_name->s_name : "");
+
+    py_Ref item1 = py_list_getitem(py_retval(), 1);
+    py_newint(item1, (py_i64)info.b_samples);
+
+    py_Ref item2 = py_list_getitem(py_retval(), 2);
+    py_newint(item2, info.b_frames);
+
+    py_Ref item3 = py_list_getitem(py_retval(), 3);
+    py_newint(item3, info.b_nchans);
+
+    py_Ref item4 = py_list_getitem(py_retval(), 4);
+    py_newint(item4, info.b_size);
+
+    py_Ref item5 = py_list_getitem(py_retval(), 5);
+    py_newfloat(item5, info.b_sr);
+
+    py_Ref item6 = py_list_getitem(py_retval(), 6);
+    py_newint(item6, info.b_modtime);
+
+    // Add convenience fields
+    py_Ref item7 = py_list_getitem(py_retval(), 7);
+    py_newstr(item7, "name");
+
+    py_Ref item8 = py_list_getitem(py_retval(), 8);
+    py_newstr(item8, "frames");
+
+    py_Ref item9 = py_list_getitem(py_retval(), 9);
+    py_newstr(item9, "channels");
+
+    return true;
+}
+
+// Method: lock()
+// Lock buffer for safe access
+static bool Buffer_lock(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    t_max_err err = buffer_lock(obj);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to lock buffer");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: unlock()
+// Unlock buffer
+static bool Buffer_unlock(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    t_max_err err = buffer_unlock(obj);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to unlock buffer");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: locksamples()
+// Lock and get pointer to samples
+static bool Buffer_locksamples(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    float* samples = buffer_locksamples(obj);
+
+    if (!samples) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    py_newint(py_retval(), (py_i64)samples);
+    return true;
+}
+
+// Method: unlocksamples()
+// Unlock samples
+static bool Buffer_unlocksamples(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    buffer_unlocksamples(obj);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: getchannelcount()
+static bool Buffer_getchannelcount(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    t_atom_long count = buffer_getchannelcount(obj);
+    py_newint(py_retval(), count);
+    return true;
+}
+
+// Method: getframecount()
+static bool Buffer_getframecount(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    t_atom_long count = buffer_getframecount(obj);
+    py_newint(py_retval(), count);
+    return true;
+}
+
+// Method: getsamplerate()
+static bool Buffer_getsamplerate(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    t_atom_float sr = buffer_getsamplerate(obj);
+    py_newfloat(py_retval(), sr);
+    return true;
+}
+
+// Method: setdirty()
+static bool Buffer_setdirty(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    t_max_err err = buffer_setdirty(obj);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to set dirty flag");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: getfilename()
+static bool Buffer_getfilename(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    t_symbol* filename = buffer_getfilename(obj);
+
+    if (!filename || filename == gensym("")) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    py_newstr(py_retval(), filename->s_name);
+    return true;
+}
+
+// Method: peek(frame, channel)
+// Read a single sample value
+static bool Buffer_peek(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    BufferObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);  // frame
+    PY_CHECK_ARG_TYPE(2, tp_int);  // channel
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    long frame = (long)py_toint(py_arg(1));
+    long channel = (long)py_toint(py_arg(2));
+
+    // Get buffer info
+    t_buffer_info info;
+    buffer_getinfo(obj, &info);
+
+    // Validate indices
+    if (frame < 0 || frame >= info.b_frames) {
+        return IndexError("Frame index out of range");
+    }
+    if (channel < 0 || channel >= info.b_nchans) {
+        return IndexError("Channel index out of range");
+    }
+
+    // Lock and read
+    float* samples = buffer_locksamples(obj);
+    if (!samples) {
+        return RuntimeError("Failed to lock buffer samples");
+    }
+
+    // Calculate index (samples are interleaved)
+    long index = frame * info.b_nchans + channel;
+    float value = samples[index];
+
+    buffer_unlocksamples(obj);
+
+    py_newfloat(py_retval(), value);
+    return true;
+}
+
+// Method: poke(frame, channel, value)
+// Write a single sample value
+static bool Buffer_poke(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(4);
+    BufferObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);    // frame
+    PY_CHECK_ARG_TYPE(2, tp_int);    // channel
+    PY_CHECK_ARG_TYPE(3, tp_float);  // value
+
+    if (!self->buffer_ref) {
+        return RuntimeError("Buffer reference is null");
+    }
+
+    t_buffer_obj* obj = buffer_ref_getobject(self->buffer_ref);
+    if (!obj) {
+        return RuntimeError("Buffer object does not exist");
+    }
+
+    long frame = (long)py_toint(py_arg(1));
+    long channel = (long)py_toint(py_arg(2));
+    float value = (float)py_tofloat(py_arg(3));
+
+    // Get buffer info
+    t_buffer_info info;
+    buffer_getinfo(obj, &info);
+
+    // Validate indices
+    if (frame < 0 || frame >= info.b_frames) {
+        return IndexError("Frame index out of range");
+    }
+    if (channel < 0 || channel >= info.b_nchans) {
+        return IndexError("Channel index out of range");
+    }
+
+    // Lock and write
+    float* samples = buffer_locksamples(obj);
+    if (!samples) {
+        return RuntimeError("Failed to lock buffer samples");
+    }
+
+    // Calculate index (samples are interleaved)
+    long index = frame * info.b_nchans + channel;
+    samples[index] = value;
+
+    buffer_unlocksamples(obj);
+    buffer_setdirty(obj);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: is_null()
+static bool Buffer_is_null(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+    py_newbool(py_retval(), self->buffer_ref == NULL);
+    return true;
+}
+
+// Method: pointer()
+static bool Buffer_pointer(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BufferObject* self = py_touserdata(py_arg(0));
+    py_newint(py_retval(), (py_i64)self->buffer_ref);
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
 // Defer functions (module-level)
 
 // Defer callback storage
@@ -3706,6 +4657,175 @@ static bool api_defer_low(int argc, py_Ref argv) {
 
 
 // ----------------------------------------------------------------------------
+// Additional atom utility functions
+
+// atom_gettext() - Convert atoms to text string
+static bool api_atom_gettext(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+
+    // Get AtomArray
+    py_Ref arr_ref = py_arg(0);
+    if (py_typeof(arr_ref) != g_atomarray_type) {
+        py_newstr(py_retval(), "Argument must be AtomArray");
+        return false;
+    }
+
+    AtomArrayObject* arr_obj = (AtomArrayObject*)py_touserdata(arr_ref);
+    if (arr_obj->atomarray == NULL) {
+        py_newstr(py_retval(), "AtomArray is null");
+        return false;
+    }
+
+    long ac;
+    t_atom* av;
+    atomarray_getatoms(arr_obj->atomarray, &ac, &av);
+
+    // Convert to text
+    long textsize = 0;
+    char* text = NULL;
+    t_max_err err = atom_gettext(ac, av, &textsize, &text, 0);
+
+    if (err != MAX_ERR_NONE || text == NULL) {
+        py_newstr(py_retval(), "");
+        return true;
+    }
+
+    py_newstr(py_retval(), text);
+
+    // Free text allocated by atom_gettext
+    if (text) sysmem_freeptr(text);
+
+    return true;
+}
+
+// AtomArray.to_ints() - Convert to Python list of integers
+static bool AtomArray_to_ints(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(0);
+    AtomArrayObject* self = (AtomArrayObject*)py_touserdata(py_arg(0));
+
+    if (self->atomarray == NULL) {
+        py_newstr(py_retval(), "AtomArray is null");
+        return false;
+    }
+
+    long ac;
+    t_atom* av;
+    atomarray_getatoms(self->atomarray, &ac, &av);
+
+    // Create Python list
+    py_newlistn(py_retval(), ac);
+
+    // Extract longs
+    t_atom_long* vals = (t_atom_long*)sysmem_newptr(ac * sizeof(t_atom_long));
+    atom_getlong_array(ac, av, ac, vals);
+
+    for (long i = 0; i < ac; i++) {
+        py_Ref item = py_list_getitem(py_retval(), i);
+        py_newint(item, (py_i64)vals[i]);
+    }
+
+    sysmem_freeptr(vals);
+    return true;
+}
+
+// AtomArray.to_floats() - Convert to Python list of floats
+static bool AtomArray_to_floats(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(0);
+    AtomArrayObject* self = (AtomArrayObject*)py_touserdata(py_arg(0));
+
+    if (self->atomarray == NULL) {
+        py_newstr(py_retval(), "AtomArray is null");
+        return false;
+    }
+
+    long ac;
+    t_atom* av;
+    atomarray_getatoms(self->atomarray, &ac, &av);
+
+    // Create Python list
+    py_newlistn(py_retval(), ac);
+
+    // Extract doubles
+    double* vals = (double*)sysmem_newptr(ac * sizeof(double));
+    atom_getdouble_array(ac, av, ac, vals);
+
+    for (long i = 0; i < ac; i++) {
+        py_Ref item = py_list_getitem(py_retval(), i);
+        py_newfloat(item, vals[i]);
+    }
+
+    sysmem_freeptr(vals);
+    return true;
+}
+
+// AtomArray.to_symbols() - Convert to Python list of symbol strings
+static bool AtomArray_to_symbols(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(0);
+    AtomArrayObject* self = (AtomArrayObject*)py_touserdata(py_arg(0));
+
+    if (self->atomarray == NULL) {
+        py_newstr(py_retval(), "AtomArray is null");
+        return false;
+    }
+
+    long ac;
+    t_atom* av;
+    atomarray_getatoms(self->atomarray, &ac, &av);
+
+    // Create Python list
+    py_newlistn(py_retval(), ac);
+
+    // Extract symbols
+    t_symbol** vals = (t_symbol**)sysmem_newptr(ac * sizeof(t_symbol*));
+    atom_getsym_array(ac, av, ac, vals);
+
+    for (long i = 0; i < ac; i++) {
+        py_Ref item = py_list_getitem(py_retval(), i);
+        if (vals[i] != NULL) {
+            py_newstr(item, vals[i]->s_name);
+        } else {
+            py_newstr(item, "");
+        }
+    }
+
+    sysmem_freeptr(vals);
+    return true;
+}
+
+// AtomArray.to_text() - Convert to text string
+static bool AtomArray_to_text(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(0);
+    AtomArrayObject* self = (AtomArrayObject*)py_touserdata(py_arg(0));
+
+    if (self->atomarray == NULL) {
+        py_newstr(py_retval(), "");
+        return true;
+    }
+
+    long ac;
+    t_atom* av;
+    atomarray_getatoms(self->atomarray, &ac, &av);
+
+    // Convert to text
+    long textsize = 0;
+    char* text = NULL;
+    t_max_err err = atom_gettext(ac, av, &textsize, &text, 0);
+
+    if (err != MAX_ERR_NONE || text == NULL) {
+        py_newstr(py_retval(), "");
+        return true;
+    }
+
+    py_newstr(py_retval(), text);
+
+    // Free text allocated by atom_gettext
+    if (text) sysmem_freeptr(text);
+
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
 // initialize
 
 bool api_module_initialize(void) {
@@ -3756,6 +4876,9 @@ bool api_module_initialize(void) {
     // Atom parsing functions (module-level)
     py_bindfunc(mod, "parse", api_parse);
 
+    // Atom utility functions (module-level)
+    py_bindfunc(mod, "atom_gettext", api_atom_gettext);
+
     // Object registration and notification functions (module-level)
     py_bindfunc(mod, "object_register", api_object_register);
     py_bindfunc(mod, "object_unregister", api_object_unregister);
@@ -3793,6 +4916,30 @@ bool api_module_initialize(void) {
     py_bindmethod(g_outlet_type, "anything", Outlet_anything);
     py_bindmethod(g_outlet_type, "pointer", Outlet_pointer);
 
+    // Buffer type
+    g_buffer_type = py_newtype("Buffer", tp_object, mod, (py_Dtor)Buffer__del__);
+    py_bindmethod(g_buffer_type, "__new__", Buffer__new__);
+    py_bindmethod(g_buffer_type, "__init__", Buffer__init__);
+    py_bindmethod(g_buffer_type, "__repr__", Buffer__repr__);
+    py_bindmethod(g_buffer_type, "ref_new", Buffer_ref_new);
+    py_bindmethod(g_buffer_type, "ref_set", Buffer_ref_set);
+    py_bindmethod(g_buffer_type, "exists", Buffer_exists);
+    py_bindmethod(g_buffer_type, "getobject", Buffer_getobject);
+    py_bindmethod(g_buffer_type, "getinfo", Buffer_getinfo);
+    py_bindmethod(g_buffer_type, "lock", Buffer_lock);
+    py_bindmethod(g_buffer_type, "unlock", Buffer_unlock);
+    py_bindmethod(g_buffer_type, "locksamples", Buffer_locksamples);
+    py_bindmethod(g_buffer_type, "unlocksamples", Buffer_unlocksamples);
+    py_bindmethod(g_buffer_type, "getchannelcount", Buffer_getchannelcount);
+    py_bindmethod(g_buffer_type, "getframecount", Buffer_getframecount);
+    py_bindmethod(g_buffer_type, "getsamplerate", Buffer_getsamplerate);
+    py_bindmethod(g_buffer_type, "setdirty", Buffer_setdirty);
+    py_bindmethod(g_buffer_type, "getfilename", Buffer_getfilename);
+    py_bindmethod(g_buffer_type, "peek", Buffer_peek);
+    py_bindmethod(g_buffer_type, "poke", Buffer_poke);
+    py_bindmethod(g_buffer_type, "is_null", Buffer_is_null);
+    py_bindmethod(g_buffer_type, "pointer", Buffer_pointer);
+
     // AtomArray type
     g_atomarray_type = py_newtype("AtomArray", tp_object, mod, (py_Dtor)AtomArray__del__);
     py_bindmethod(g_atomarray_type, "__new__", AtomArray__new__);
@@ -3807,6 +4954,10 @@ bool api_module_initialize(void) {
     py_bindmethod(g_atomarray_type, "to_list", AtomArray_to_list);
     py_bindmethod(g_atomarray_type, "duplicate", AtomArray_duplicate);
     py_bindmethod(g_atomarray_type, "from_parse", AtomArray_from_parse);
+    py_bindmethod(g_atomarray_type, "to_ints", AtomArray_to_ints);
+    py_bindmethod(g_atomarray_type, "to_floats", AtomArray_to_floats);
+    py_bindmethod(g_atomarray_type, "to_symbols", AtomArray_to_symbols);
+    py_bindmethod(g_atomarray_type, "to_text", AtomArray_to_text);
 
     // Dictionary type
     g_dictionary_type = py_newtype("Dictionary", tp_object, mod, (py_Dtor)Dictionary__del__);
@@ -3879,6 +5030,30 @@ bool api_module_initialize(void) {
     py_bindmethod(g_patcher_type, "set_dirty", Patcher_set_dirty);
     py_bindmethod(g_patcher_type, "count", Patcher_count);
     py_bindmethod(g_patcher_type, "pointer", Patcher_pointer);
+    py_bindmethod(g_patcher_type, "get_firstline", Patcher_get_firstline);
+    py_bindmethod(g_patcher_type, "get_name", Patcher_get_name);
+    py_bindmethod(g_patcher_type, "get_filepath", Patcher_get_filepath);
+    py_bindmethod(g_patcher_type, "get_filename", Patcher_get_filename);
+    py_bindmethod(g_patcher_type, "get_boxes", Patcher_get_boxes);
+    py_bindmethod(g_patcher_type, "get_lines", Patcher_get_lines);
+
+    // Patchline type
+    g_patchline_type = py_newtype("Patchline", tp_object, mod, (py_Dtor)Patchline__del__);
+    py_bindmethod(g_patchline_type, "__new__", Patchline__new__);
+    py_bindmethod(g_patchline_type, "__init__", Patchline__init__);
+    py_bindmethod(g_patchline_type, "__repr__", Patchline__repr__);
+    py_bindmethod(g_patchline_type, "wrap", Patchline_wrap);
+    py_bindmethod(g_patchline_type, "is_null", Patchline_is_null);
+    py_bindmethod(g_patchline_type, "get_box1", Patchline_get_box1);
+    py_bindmethod(g_patchline_type, "get_box2", Patchline_get_box2);
+    py_bindmethod(g_patchline_type, "get_outletnum", Patchline_get_outletnum);
+    py_bindmethod(g_patchline_type, "get_inletnum", Patchline_get_inletnum);
+    py_bindmethod(g_patchline_type, "get_startpoint", Patchline_get_startpoint);
+    py_bindmethod(g_patchline_type, "get_endpoint", Patchline_get_endpoint);
+    py_bindmethod(g_patchline_type, "get_hidden", Patchline_get_hidden);
+    py_bindmethod(g_patchline_type, "set_hidden", Patchline_set_hidden);
+    py_bindmethod(g_patchline_type, "get_nextline", Patchline_get_nextline);
+    py_bindmethod(g_patchline_type, "pointer", Patchline_pointer);
 
     // Hashtab type
     g_hashtab_type = py_newtype("Hashtab", tp_object, mod, (py_Dtor)Hashtab__del__);
