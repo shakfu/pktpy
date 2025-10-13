@@ -73,6 +73,8 @@ repr(a)                         # Atom(value) format
 # Create
 arr = api.AtomArray()               # Empty
 arr = api.AtomArray([1, 2, 3])      # From list
+arr = api.parse("foo 42 3.14")      # Parse string
+arr = api.AtomArray.from_parse("a b c")  # Class method
 
 # Access
 arr[0]                              # Get Atom at index
@@ -133,6 +135,159 @@ d.dump(recurse=True, console=False) # With options
 # Nested structures
 d["sub"] = api.Dictionary()         # Nested dict
 d["arr"] = [1, 2, 3]                # Stored as AtomArray
+```
+
+## Objects
+
+```python
+# Create wrapper
+obj = api.Object()
+
+# Wrap existing Max object pointer
+obj.wrap(pointer)                   # Takes ownership: False
+
+# Create new Max object (if class registered)
+obj.create("classname", arg1, arg2) # Takes ownership: True
+
+# Query
+obj.is_null()                       # Check if null
+obj.classname()                     # Get class name
+obj.pointer()                       # Get raw pointer
+
+# Attributes
+value = obj.getattr("name")         # Get attribute
+obj.setattr("name", value)          # Set attribute
+names = obj.attrnames()             # List all attributes
+
+# Methods
+result = obj.method("methodname")   # Call method
+result = obj.method("method", arg1) # With arguments
+
+# Cleanup
+obj.free()                          # Free owned object
+```
+
+## Hashtabs
+
+```python
+# Create new hashtab
+h = api.Hashtab()
+
+# Wrap existing hashtab pointer
+h.wrap(pointer)                     # Takes ownership: False
+
+# Access
+h["key"] = 100                      # Store integer
+h["key"] = 1.5                      # Store float
+h["key"] = "value"                  # Store symbol
+value = h["key"]                    # Lookup
+
+# Length and membership
+len(h)                              # Number of entries
+"key" in h                          # Check if key exists
+
+# Keys
+keys = h.keys()                     # Get all keys
+
+# Typed methods
+h.store("key", 42)                  # Store long
+h.store("key", 3.14)                # Store float
+h.store("key", "sym")               # Store symbol
+val = h.lookup("key")               # Lookup
+
+# Modify
+h.delete("key")                     # Remove entry
+h.clear()                           # Remove all
+size = h.getsize()                  # Get size
+
+# Query
+h.is_null()                         # Check if null
+h.pointer()                         # Get raw pointer
+```
+
+## Linklists
+
+```python
+# Create new linklist
+lst = api.Linklist()
+
+# Wrap existing linklist pointer
+lst.wrap(pointer)                   # Takes ownership: False
+
+# Access
+len(lst)                            # Number of items
+lst[0]                              # Get item at index (as int pointer)
+lst[-1]                             # Negative indexing
+
+# Add items
+lst.append(obj_pointer)             # Append object pointer
+lst.insertindex(index, obj_pointer) # Insert at index
+
+# Query
+ptr = lst.getindex(index)           # Get pointer at index
+size = lst.getsize()                # Get size
+
+# Remove
+lst.chuckindex(index)               # Remove by index
+lst.deleteindex(index)              # Delete by index (same)
+lst.clear()                         # Remove all
+
+# Reorder
+lst.reverse()                       # Reverse order
+lst.rotate(n)                       # Rotate by n positions
+lst.shuffle()                       # Random shuffle
+lst.swap(i, j)                      # Swap two indices
+
+# Query
+lst.is_null()                       # Check if null
+lst.pointer()                       # Get raw pointer
+```
+
+## Patcher & Box
+
+```python
+# Patcher wrapper
+p = api.Patcher()
+p.wrap(patcher_pointer)
+
+# Navigation
+first = p.get_firstobject()         # First box pointer
+last = p.get_lastobject()           # Last box pointer
+parent = p.get_parentpatcher()      # Parent patcher
+top = p.get_toppatcher()            # Top patcher
+
+# Object management
+box_ptr = p.newobject("gate")       # Create object
+p.deleteobj(box_ptr)                # Delete object
+count = p.count()                   # Object count
+
+# Properties
+title = p.get_title()               # Get title
+p.set_title("New Title")            # Set title
+rect = p.get_rect()                 # [x, y, w, h]
+p.set_rect(0, 0, 600, 400)          # Set rect
+
+# State
+p.set_locked(True)                  # Lock/unlock
+p.set_dirty(True)                   # Mark dirty
+
+# Query
+p.is_null()                         # Check if null
+p.pointer()                         # Get raw pointer
+
+# Box wrapper
+b = api.Box()
+b.wrap(box_pointer)
+
+# Properties
+b.classname()                       # Get class name
+obj = b.get_object()                # Get t_object pointer
+rect = b.get_rect()                 # [x, y, w, h]
+b.set_rect(10, 10, 100, 50)         # Set rect
+
+# Query
+b.is_null()                         # Check if null
+b.pointer()                         # Get raw pointer
 ```
 
 ## Common Patterns

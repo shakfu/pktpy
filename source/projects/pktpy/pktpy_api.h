@@ -19,6 +19,15 @@
 // Max dictionary
 #include "ext_dictionary.h"
 
+// Max patcher
+#include "jpatcher_api.h"
+
+// Max hashtab
+#include "ext_hashtab.h"
+
+// Max linklist
+#include "ext_linklist.h"
+
 // ----------------------------------------------------------------------------
 // custom pktpy2 functions
 
@@ -179,6 +188,11 @@ static py_Type g_symbol_type = -1;
 static py_Type g_atom_type = -1;
 static py_Type g_atomarray_type = -1;
 static py_Type g_dictionary_type = -1;
+static py_Type g_object_type = -1;
+static py_Type g_patcher_type = -1;
+static py_Type g_box_type = -1;
+static py_Type g_hashtab_type = -1;
+static py_Type g_linklist_type = -1;
 
 // Forward declarations for utility functions
 static bool py_to_atom(py_Ref py_val, t_atom* atom);
@@ -1225,6 +1239,1640 @@ static bool Dictionary_dump(int argc, py_Ref argv) {
 
 
 // ----------------------------------------------------------------------------
+// Object wrapper - Generic Max object wrapper
+
+typedef struct {
+    t_object* obj;
+    bool owns_obj;  // Whether we should free it
+} MaxObject;
+
+static bool Object__new__(int argc, py_Ref argv) {
+    py_Type cls = py_totype(argv);
+    MaxObject* wrapper = py_newobject(py_retval(), cls, 0, sizeof(MaxObject));
+    wrapper->obj = NULL;
+    wrapper->owns_obj = false;
+    return true;
+}
+
+static bool Object__init__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    // Object is created via create() or wrap() methods, not __init__
+    py_newnone(py_retval());
+    return true;
+}
+
+// Destructor
+static void Object__del__(void* self) {
+    MaxObject* wrapper = (MaxObject*)self;
+    if (wrapper->owns_obj && wrapper->obj) {
+        object_free(wrapper->obj);
+        wrapper->obj = NULL;
+    }
+}
+
+static bool Object__repr__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    MaxObject* self = py_touserdata(py_arg(0));
+
+    char buf[256];
+    if (self->obj) {
+        t_symbol* classname = object_classname(self->obj);
+        snprintf(buf, sizeof(buf), "Object(%s, %p)", classname->s_name, self->obj);
+    } else {
+        snprintf(buf, sizeof(buf), "Object(null)");
+    }
+    py_newstr(py_retval(), buf);
+    return true;
+}
+
+// Class method: create(classname, *args)
+static bool Object_create(int argc, py_Ref argv) {
+    if (argc < 2) {
+        return TypeError("create() requires at least 1 argument (classname)");
+    }
+
+    MaxObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    const char* classname_str = py_tostr(py_arg(1));
+    t_symbol* classname = gensym(classname_str);
+
+    // Convert remaining Python args to atoms
+    int num_args = argc - 2;
+    t_atom* atoms = NULL;
+
+    if (num_args > 0) {
+        atoms = (t_atom*)sysmem_newptr(num_args * sizeof(t_atom));
+        if (!atoms) {
+            return RuntimeError("Failed to allocate memory for arguments");
+        }
+
+        for (int i = 0; i < num_args; i++) {
+            py_Ref arg = py_arg(i + 2);
+            if (!py_to_atom(arg, &atoms[i])) {
+                sysmem_freeptr(atoms);
+                return TypeError("Argument %d cannot be converted to atom", i);
+            }
+        }
+    }
+
+    // Create object
+    t_object* obj = (t_object*)object_new_typed(CLASS_BOX, classname, num_args, atoms);
+
+    if (atoms) {
+        sysmem_freeptr(atoms);
+    }
+
+    if (!obj) {
+        return RuntimeError("Failed to create object of class '%s'", classname_str);
+    }
+
+    // Free old object if we owned it
+    if (self->owns_obj && self->obj) {
+        object_free(self->obj);
+    }
+
+    self->obj = obj;
+    self->owns_obj = true;
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: wrap(pointer) - Wrap existing object pointer (no ownership)
+static bool Object_wrap(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    MaxObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    py_i64 ptr = py_toint(py_arg(1));
+    if (ptr == 0) {
+        return ValueError("Cannot wrap null pointer");
+    }
+
+    // Free old object if we owned it
+    if (self->owns_obj && self->obj) {
+        object_free(self->obj);
+    }
+
+    self->obj = (t_object*)ptr;
+    self->owns_obj = false;  // Don't free wrapped objects
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: free()
+static bool Object_free_method(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    MaxObject* self = py_touserdata(py_arg(0));
+
+    if (self->owns_obj && self->obj) {
+        object_free(self->obj);
+        self->obj = NULL;
+        self->owns_obj = false;
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: is_null()
+static bool Object_is_null(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    MaxObject* self = py_touserdata(py_arg(0));
+    py_newbool(py_retval(), self->obj == NULL);
+    return true;
+}
+
+// Method: classname()
+static bool Object_classname(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    MaxObject* self = py_touserdata(py_arg(0));
+
+    if (!self->obj) {
+        return RuntimeError("Object is null");
+    }
+
+    t_symbol* classname = object_classname(self->obj);
+    py_newstr(py_retval(), classname->s_name);
+    return true;
+}
+
+// Method: method(name, *args)
+static bool Object_method(int argc, py_Ref argv) {
+    if (argc < 2) {
+        return TypeError("method() requires at least 1 argument (method name)");
+    }
+
+    MaxObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->obj) {
+        return RuntimeError("Object is null");
+    }
+
+    const char* method_name = py_tostr(py_arg(1));
+    t_symbol* method_sym = gensym(method_name);
+
+    // Convert remaining Python args to atoms
+    int num_args = argc - 2;
+    t_atom* atoms = NULL;
+    t_atom result;
+
+    if (num_args > 0) {
+        atoms = (t_atom*)sysmem_newptr(num_args * sizeof(t_atom));
+        if (!atoms) {
+            return RuntimeError("Failed to allocate memory for arguments");
+        }
+
+        for (int i = 0; i < num_args; i++) {
+            py_Ref arg = py_arg(i + 2);
+            if (!py_to_atom(arg, &atoms[i])) {
+                sysmem_freeptr(atoms);
+                return TypeError("Argument %d cannot be converted to atom", i);
+            }
+        }
+    }
+
+    // Call method
+    atom_setsym(&result, gensym(""));  // Initialize result
+    t_max_err err = object_method_typed(self->obj, method_sym, num_args, atoms, &result);
+
+    if (atoms) {
+        sysmem_freeptr(atoms);
+    }
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Method '%s' failed with error %d", method_name, (int)err);
+    }
+
+    // Convert result to Python
+    if (!atom_to_py(&result)) {
+        py_newnone(py_retval());
+    }
+
+    return true;
+}
+
+// Method: getattr(name)
+static bool Object_getattr(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    MaxObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->obj) {
+        return RuntimeError("Object is null");
+    }
+
+    const char* attr_name = py_tostr(py_arg(1));
+    t_symbol* attr_sym = gensym(attr_name);
+
+    long ac = 0;
+    t_atom* av = NULL;
+
+    t_max_err err = object_attr_getvalueof(self->obj, attr_sym, &ac, &av);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to get attribute '%s'", attr_name);
+    }
+
+    if (ac == 0 || !av) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    // If single value, return it directly
+    if (ac == 1) {
+        if (!atom_to_py(&av[0])) {
+            py_newnone(py_retval());
+        }
+    } else {
+        // Multiple values, return as list
+        py_newlistn(py_retval(), ac);
+        for (long i = 0; i < ac; i++) {
+            py_Ref item = py_list_getitem(py_retval(), i);
+            if (!atom_to_py(&av[i])) {
+                py_newnone(item);
+            } else {
+                py_assign(item, py_retval());
+            }
+        }
+    }
+
+    return true;
+}
+
+// Method: setattr(name, value)
+static bool Object_setattr(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    MaxObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->obj) {
+        return RuntimeError("Object is null");
+    }
+
+    const char* attr_name = py_tostr(py_arg(1));
+    t_symbol* attr_sym = gensym(attr_name);
+    py_Ref value = py_arg(2);
+
+    t_max_err err = MAX_ERR_GENERIC;
+
+    // Handle different value types
+    if (py_isint(value)) {
+        err = object_attr_setlong(self->obj, attr_sym, py_toint(value));
+    } else if (py_isfloat(value)) {
+        err = object_attr_setfloat(self->obj, attr_sym, py_tofloat(value));
+    } else if (py_isstr(value)) {
+        err = object_attr_setsym(self->obj, attr_sym, gensym(py_tostr(value)));
+    } else if (py_isinstance(value, tp_list)) {
+        // Convert list to atoms
+        int list_len = py_list_len(value);
+        t_atom* atoms = (t_atom*)sysmem_newptr(list_len * sizeof(t_atom));
+        if (!atoms) {
+            return RuntimeError("Failed to allocate memory");
+        }
+
+        for (int i = 0; i < list_len; i++) {
+            py_Ref item = py_list_getitem(value, i);
+            if (!py_to_atom(item, &atoms[i])) {
+                sysmem_freeptr(atoms);
+                return TypeError("List item %d cannot be converted to atom", i);
+            }
+        }
+
+        err = object_attr_setvalueof(self->obj, attr_sym, list_len, atoms);
+        sysmem_freeptr(atoms);
+    } else {
+        return TypeError("Unsupported value type for attribute");
+    }
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to set attribute '%s'", attr_name);
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: attrnames()
+static bool Object_attrnames(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    MaxObject* self = py_touserdata(py_arg(0));
+
+    if (!self->obj) {
+        return RuntimeError("Object is null");
+    }
+
+    long numattrs = 0;
+    t_symbol** attrnames = NULL;
+
+    t_max_err err = object_attr_getnames(self->obj, &numattrs, &attrnames);
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to get attribute names");
+    }
+
+    // Create Python list
+    py_newlistn(py_retval(), numattrs);
+
+    for (long i = 0; i < numattrs; i++) {
+        py_Ref item = py_list_getitem(py_retval(), i);
+        py_newstr(item, attrnames[i]->s_name);
+    }
+
+    // Free the array (if needed - check Max API docs)
+    if (attrnames) {
+        sysmem_freeptr(attrnames);
+    }
+
+    return true;
+}
+
+// Method: pointer() - Get raw pointer value
+static bool Object_pointer(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    MaxObject* self = py_touserdata(py_arg(0));
+
+    py_i64 ptr = (py_i64)self->obj;
+    py_newint(py_retval(), ptr);
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
+// Box wrapper - Wrapper for Max patcher box objects (t_jbox / t_object)
+
+typedef struct {
+    t_object* box;
+    bool owns_box;
+} BoxObject;
+
+static bool Box__new__(int argc, py_Ref argv) {
+    py_Type cls = py_totype(argv);
+    BoxObject* wrapper = py_newobject(py_retval(), cls, 0, sizeof(BoxObject));
+    wrapper->box = NULL;
+    wrapper->owns_box = false;
+    return true;
+}
+
+static bool Box__init__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    py_newnone(py_retval());
+    return true;
+}
+
+static void Box__del__(void* self) {
+    BoxObject* wrapper = (BoxObject*)self;
+    // Boxes are owned by the patcher, so we don't free them
+    wrapper->box = NULL;
+}
+
+static bool Box__repr__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BoxObject* self = py_touserdata(py_arg(0));
+
+    char buf[256];
+    if (self->box) {
+        t_symbol* classname = object_classname(jbox_get_object(self->box));
+        snprintf(buf, sizeof(buf), "Box(%s, %p)", classname->s_name, self->box);
+    } else {
+        snprintf(buf, sizeof(buf), "Box(null)");
+    }
+    py_newstr(py_retval(), buf);
+    return true;
+}
+
+// Method: wrap(pointer)
+static bool Box_wrap(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    BoxObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    py_i64 ptr = py_toint(py_arg(1));
+    if (ptr == 0) {
+        return ValueError("Cannot wrap null pointer");
+    }
+
+    self->box = (t_object*)ptr;
+    self->owns_box = false;
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: is_null()
+static bool Box_is_null(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BoxObject* self = py_touserdata(py_arg(0));
+    py_newbool(py_retval(), self->box == NULL);
+    return true;
+}
+
+// Method: classname()
+static bool Box_classname(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BoxObject* self = py_touserdata(py_arg(0));
+
+    if (!self->box) {
+        return RuntimeError("Box is null");
+    }
+
+    t_object* obj = jbox_get_object(self->box);
+    t_symbol* classname = object_classname(obj);
+    py_newstr(py_retval(), classname->s_name);
+    return true;
+}
+
+// Method: get_object() - Get underlying Max object
+static bool Box_get_object(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BoxObject* self = py_touserdata(py_arg(0));
+
+    if (!self->box) {
+        return RuntimeError("Box is null");
+    }
+
+    t_object* obj = jbox_get_object(self->box);
+
+    if (g_object_type < 0) {
+        return RuntimeError("Object type not initialized");
+    }
+
+    MaxObject* wrapper = py_newobject(py_retval(), g_object_type, 0, sizeof(MaxObject));
+    wrapper->obj = obj;
+    wrapper->owns_obj = false;  // Box owns the object
+
+    return true;
+}
+
+// Method: get_rect() - Get box rectangle
+static bool Box_get_rect(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BoxObject* self = py_touserdata(py_arg(0));
+
+    if (!self->box) {
+        return RuntimeError("Box is null");
+    }
+
+    t_rect rect;
+    t_max_err err = jbox_get_rect_for_view(self->box, NULL, &rect);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to get box rectangle");
+    }
+
+    // Return as dict: {x, y, width, height}
+    py_Ref result = py_retval();
+    py_newlistn(result, 4);
+    py_newfloat(py_list_getitem(result, 0), rect.x);
+    py_newfloat(py_list_getitem(result, 1), rect.y);
+    py_newfloat(py_list_getitem(result, 2), rect.width);
+    py_newfloat(py_list_getitem(result, 3), rect.height);
+
+    return true;
+}
+
+// Method: set_rect(x, y, width, height)
+static bool Box_set_rect(int argc, py_Ref argv) {
+    if (argc != 5) {
+        return TypeError("set_rect() takes 4 arguments (x, y, width, height)");
+    }
+
+    BoxObject* self = py_touserdata(py_arg(0));
+
+    if (!self->box) {
+        return RuntimeError("Box is null");
+    }
+
+    t_rect rect;
+    rect.x = py_tofloat(py_arg(1));
+    rect.y = py_tofloat(py_arg(2));
+    rect.width = py_tofloat(py_arg(3));
+    rect.height = py_tofloat(py_arg(4));
+
+    t_max_err err = jbox_set_rect_for_view(self->box, NULL, &rect);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to set box rectangle");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: pointer()
+static bool Box_pointer(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    BoxObject* self = py_touserdata(py_arg(0));
+
+    py_i64 ptr = (py_i64)self->box;
+    py_newint(py_retval(), ptr);
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
+// Patcher wrapper - Wrapper for Max patcher objects
+
+typedef struct {
+    t_object* patcher;
+    bool owns_patcher;
+} PatcherObject;
+
+static bool Patcher__new__(int argc, py_Ref argv) {
+    py_Type cls = py_totype(argv);
+    PatcherObject* wrapper = py_newobject(py_retval(), cls, 0, sizeof(PatcherObject));
+    wrapper->patcher = NULL;
+    wrapper->owns_patcher = false;
+    return true;
+}
+
+static bool Patcher__init__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    py_newnone(py_retval());
+    return true;
+}
+
+static void Patcher__del__(void* self) {
+    PatcherObject* wrapper = (PatcherObject*)self;
+    // Patchers are typically not owned by Python wrappers
+    wrapper->patcher = NULL;
+}
+
+static bool Patcher__repr__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    char buf[256];
+    if (self->patcher) {
+        snprintf(buf, sizeof(buf), "Patcher(%p)", self->patcher);
+    } else {
+        snprintf(buf, sizeof(buf), "Patcher(null)");
+    }
+    py_newstr(py_retval(), buf);
+    return true;
+}
+
+// Method: wrap(pointer)
+static bool Patcher_wrap(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PatcherObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    py_i64 ptr = py_toint(py_arg(1));
+    if (ptr == 0) {
+        return ValueError("Cannot wrap null pointer");
+    }
+
+    self->patcher = (t_object*)ptr;
+    self->owns_patcher = false;
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: is_null()
+static bool Patcher_is_null(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+    py_newbool(py_retval(), self->patcher == NULL);
+    return true;
+}
+
+// Method: get_firstobject()
+static bool Patcher_get_firstobject(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_object* box = jpatcher_get_firstobject(self->patcher);
+
+    if (!box) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    if (g_box_type < 0) {
+        return RuntimeError("Box type not initialized");
+    }
+
+    BoxObject* wrapper = py_newobject(py_retval(), g_box_type, 0, sizeof(BoxObject));
+    wrapper->box = box;
+    wrapper->owns_box = false;
+
+    return true;
+}
+
+// Method: get_lastobject()
+static bool Patcher_get_lastobject(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_object* box = jpatcher_get_lastobject(self->patcher);
+
+    if (!box) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    if (g_box_type < 0) {
+        return RuntimeError("Box type not initialized");
+    }
+
+    BoxObject* wrapper = py_newobject(py_retval(), g_box_type, 0, sizeof(BoxObject));
+    wrapper->box = box;
+    wrapper->owns_box = false;
+
+    return true;
+}
+
+// Method: newobject(text) - Create new object from text
+static bool Patcher_newobject(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PatcherObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    const char* text = py_tostr(py_arg(1));
+    t_object* box = newobject_fromboxtext(self->patcher, text);
+
+    if (!box) {
+        return RuntimeError("Failed to create object from text: '%s'", text);
+    }
+
+    if (g_box_type < 0) {
+        return RuntimeError("Box type not initialized");
+    }
+
+    BoxObject* wrapper = py_newobject(py_retval(), g_box_type, 0, sizeof(BoxObject));
+    wrapper->box = box;
+    wrapper->owns_box = false;
+
+    return true;
+}
+
+// Method: deleteobj(box) - Delete object from patcher
+static bool Patcher_deleteobj(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    // Check if argument is a Box object
+    if (g_box_type >= 0 && py_checktype(py_arg(1), g_box_type)) {
+        BoxObject* box_wrapper = py_touserdata(py_arg(1));
+        if (!box_wrapper->box) {
+            return RuntimeError("Box is null");
+        }
+        jpatcher_deleteobj(self->patcher, (t_jbox*)box_wrapper->box);
+        box_wrapper->box = NULL;  // Invalidate the wrapper
+    } else {
+        return TypeError("Argument must be a Box object");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: set_locked(locked)
+static bool Patcher_set_locked(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PatcherObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    char locked = (char)py_toint(py_arg(1));
+    t_max_err err = jpatcher_set_locked(self->patcher, locked);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to set locked state");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: get_title()
+static bool Patcher_get_title(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_symbol* title = object_attr_getsym(self->patcher, gensym("title"));
+
+    if (title) {
+        py_newstr(py_retval(), title->s_name);
+    } else {
+        py_newstr(py_retval(), "");
+    }
+
+    return true;
+}
+
+// Method: set_title(title)
+static bool Patcher_set_title(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PatcherObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    const char* title = py_tostr(py_arg(1));
+    t_max_err err = jpatcher_set_title(self->patcher, gensym(title));
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to set title");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: get_rect() - Get patcher window rectangle
+static bool Patcher_get_rect(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_rect rect;
+    t_max_err err = jpatcher_get_rect(self->patcher, &rect);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to get patcher rectangle");
+    }
+
+    // Return as list: [x, y, width, height]
+    py_Ref result = py_retval();
+    py_newlistn(result, 4);
+    py_newfloat(py_list_getitem(result, 0), rect.x);
+    py_newfloat(py_list_getitem(result, 1), rect.y);
+    py_newfloat(py_list_getitem(result, 2), rect.width);
+    py_newfloat(py_list_getitem(result, 3), rect.height);
+
+    return true;
+}
+
+// Method: set_rect(x, y, width, height)
+static bool Patcher_set_rect(int argc, py_Ref argv) {
+    if (argc != 5) {
+        return TypeError("set_rect() takes 4 arguments (x, y, width, height)");
+    }
+
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_rect rect;
+    rect.x = py_tofloat(py_arg(1));
+    rect.y = py_tofloat(py_arg(2));
+    rect.width = py_tofloat(py_arg(3));
+    rect.height = py_tofloat(py_arg(4));
+
+    t_max_err err = jpatcher_set_rect(self->patcher, &rect);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to set patcher rectangle");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: get_parentpatcher()
+static bool Patcher_get_parentpatcher(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_object* parent = jpatcher_get_parentpatcher(self->patcher);
+
+    if (!parent) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    if (g_patcher_type < 0) {
+        return RuntimeError("Patcher type not initialized");
+    }
+
+    PatcherObject* wrapper = py_newobject(py_retval(), g_patcher_type, 0, sizeof(PatcherObject));
+    wrapper->patcher = parent;
+    wrapper->owns_patcher = false;
+
+    return true;
+}
+
+// Method: get_toppatcher()
+static bool Patcher_get_toppatcher(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    t_object* top = jpatcher_get_toppatcher(self->patcher);
+
+    if (!top) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    if (g_patcher_type < 0) {
+        return RuntimeError("Patcher type not initialized");
+    }
+
+    PatcherObject* wrapper = py_newobject(py_retval(), g_patcher_type, 0, sizeof(PatcherObject));
+    wrapper->patcher = top;
+    wrapper->owns_patcher = false;
+
+    return true;
+}
+
+// Method: set_dirty(dirty)
+static bool Patcher_set_dirty(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PatcherObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    char dirty = (char)py_toint(py_arg(1));
+    t_max_err err = jpatcher_set_dirty(self->patcher, dirty);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to set dirty state");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: pointer()
+static bool Patcher_pointer(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    py_i64 ptr = (py_i64)self->patcher;
+    py_newint(py_retval(), ptr);
+    return true;
+}
+
+// Method: count() - Count objects in patcher
+static bool Patcher_count(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PatcherObject* self = py_touserdata(py_arg(0));
+
+    if (!self->patcher) {
+        return RuntimeError("Patcher is null");
+    }
+
+    long count = 0;
+    t_object* box = jpatcher_get_firstobject(self->patcher);
+
+    while (box) {
+        count++;
+        object_method(box, gensym("getnextobject"), &box);
+    }
+
+    py_newint(py_retval(), count);
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
+// Hashtab wrapper - Wrapper for Max hashtable objects
+
+typedef struct {
+    t_hashtab* hashtab;
+    bool owns_hashtab;
+} HashtabObject;
+
+static bool Hashtab__new__(int argc, py_Ref argv) {
+    py_Type cls = py_totype(argv);
+    HashtabObject* wrapper = py_newobject(py_retval(), cls, 0, sizeof(HashtabObject));
+
+    // Create new hashtab with default size (or custom size if provided)
+    long slotcount = 0;  // 0 = use default
+    if (argc > 1 && py_isint(py_arg(1))) {
+        slotcount = py_toint(py_arg(1));
+    }
+
+    wrapper->hashtab = hashtab_new(slotcount);
+    wrapper->owns_hashtab = true;
+
+    return true;
+}
+
+static bool Hashtab__init__(int argc, py_Ref argv) {
+    // Already created in __new__
+    py_newnone(py_retval());
+    return true;
+}
+
+static void Hashtab__del__(void* self) {
+    HashtabObject* wrapper = (HashtabObject*)self;
+    if (wrapper->owns_hashtab && wrapper->hashtab) {
+        object_free(wrapper->hashtab);
+        wrapper->hashtab = NULL;
+    }
+}
+
+static bool Hashtab__repr__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    HashtabObject* self = py_touserdata(py_arg(0));
+
+    char buf[256];
+    if (self->hashtab) {
+        t_atom_long size = hashtab_getsize(self->hashtab);
+        snprintf(buf, sizeof(buf), "Hashtab(size=%ld)", size);
+    } else {
+        snprintf(buf, sizeof(buf), "Hashtab(null)");
+    }
+    py_newstr(py_retval(), buf);
+    return true;
+}
+
+// __len__ - Get hashtab size
+static bool Hashtab__len__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    HashtabObject* self = py_touserdata(py_arg(0));
+
+    if (!self->hashtab) {
+        return RuntimeError("Hashtab is null");
+    }
+
+    t_atom_long size = hashtab_getsize(self->hashtab);
+    py_newint(py_retval(), size);
+    return true;
+}
+
+// __contains__ - Check if key exists
+static bool Hashtab__contains__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    HashtabObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->hashtab) {
+        return RuntimeError("Hashtab is null");
+    }
+
+    const char* key_str = py_tostr(py_arg(1));
+    t_symbol* key = gensym(key_str);
+
+    t_object* val = NULL;
+    t_max_err err = hashtab_lookup(self->hashtab, key, &val);
+
+    py_newbool(py_retval(), err == MAX_ERR_NONE);
+    return true;
+}
+
+// __getitem__ - Get value by key
+static bool Hashtab__getitem__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    HashtabObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->hashtab) {
+        return RuntimeError("Hashtab is null");
+    }
+
+    const char* key_str = py_tostr(py_arg(1));
+    t_symbol* key = gensym(key_str);
+
+    // Try to get as object first
+    t_object* obj_val = NULL;
+    t_max_err err = hashtab_lookup(self->hashtab, key, &obj_val);
+
+    if (err == MAX_ERR_NONE && obj_val) {
+        // Try as long first
+        t_atom_long long_val = 0;
+        err = hashtab_lookuplong(self->hashtab, key, &long_val);
+        if (err == MAX_ERR_NONE) {
+            py_newint(py_retval(), long_val);
+            return true;
+        }
+
+        // Try as symbol
+        t_symbol* sym_val = NULL;
+        err = hashtab_lookupsym(self->hashtab, key, &sym_val);
+        if (err == MAX_ERR_NONE && sym_val) {
+            py_newstr(py_retval(), sym_val->s_name);
+            return true;
+        }
+
+        // Return object pointer as int
+        py_newint(py_retval(), (py_i64)obj_val);
+        return true;
+    }
+
+    // Key not found
+    py_Ref key_ref = py_getreg(0);
+    py_newstr(key_ref, key_str);
+    return KeyError(key_ref);
+}
+
+// __setitem__ - Set value by key
+static bool Hashtab__setitem__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    HashtabObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->hashtab) {
+        return RuntimeError("Hashtab is null");
+    }
+
+    const char* key_str = py_tostr(py_arg(1));
+    t_symbol* key = gensym(key_str);
+    py_Ref value = py_arg(2);
+
+    t_max_err err = MAX_ERR_GENERIC;
+
+    // Store based on type
+    if (py_isint(value)) {
+        err = hashtab_storelong(self->hashtab, key, py_toint(value));
+    } else if (py_isstr(value)) {
+        err = hashtab_storesym(self->hashtab, key, gensym(py_tostr(value)));
+    } else if (py_isfloat(value)) {
+        // Store float as object (no direct float support in hashtab)
+        // We'll just store it as a long for now
+        err = hashtab_storelong(self->hashtab, key, (t_atom_long)py_tofloat(value));
+    } else if (g_object_type >= 0 && py_checktype(value, g_object_type)) {
+        MaxObject* obj_wrapper = py_touserdata(value);
+        err = hashtab_store(self->hashtab, key, obj_wrapper->obj);
+    } else {
+        return TypeError("Unsupported value type for hashtab");
+    }
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to store value in hashtab");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: wrap(pointer)
+static bool Hashtab_wrap(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    HashtabObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    py_i64 ptr = py_toint(py_arg(1));
+    if (ptr == 0) {
+        return ValueError("Cannot wrap null pointer");
+    }
+
+    // Free old hashtab if we owned it
+    if (self->owns_hashtab && self->hashtab) {
+        object_free(self->hashtab);
+    }
+
+    self->hashtab = (t_hashtab*)ptr;
+    self->owns_hashtab = false;
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: is_null()
+static bool Hashtab_is_null(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    HashtabObject* self = py_touserdata(py_arg(0));
+    py_newbool(py_retval(), self->hashtab == NULL);
+    return true;
+}
+
+// Method: store(key, value)
+static bool Hashtab_store(int argc, py_Ref argv) {
+    // Same as __setitem__
+    return Hashtab__setitem__(argc, argv);
+}
+
+// Method: lookup(key, default=None)
+static bool Hashtab_lookup(int argc, py_Ref argv) {
+    if (argc < 2 || argc > 3) {
+        return TypeError("lookup() takes 1 or 2 arguments");
+    }
+
+    HashtabObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->hashtab) {
+        return RuntimeError("Hashtab is null");
+    }
+
+    const char* key_str = py_tostr(py_arg(1));
+    t_symbol* key = gensym(key_str);
+
+    t_object* obj_val = NULL;
+    t_max_err err = hashtab_lookup(self->hashtab, key, &obj_val);
+
+    if (err != MAX_ERR_NONE) {
+        // Key not found, return default
+        if (argc == 3) {
+            py_assign(py_retval(), py_arg(2));
+        } else {
+            py_newnone(py_retval());
+        }
+        return true;
+    }
+
+    // Found - try different types
+    t_atom_long long_val = 0;
+    if (hashtab_lookuplong(self->hashtab, key, &long_val) == MAX_ERR_NONE) {
+        py_newint(py_retval(), long_val);
+        return true;
+    }
+
+    t_symbol* sym_val = NULL;
+    if (hashtab_lookupsym(self->hashtab, key, &sym_val) == MAX_ERR_NONE && sym_val) {
+        py_newstr(py_retval(), sym_val->s_name);
+        return true;
+    }
+
+    // Return object pointer as int
+    py_newint(py_retval(), (py_i64)obj_val);
+    return true;
+}
+
+// Method: delete(key)
+static bool Hashtab_delete(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    HashtabObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->hashtab) {
+        return RuntimeError("Hashtab is null");
+    }
+
+    const char* key_str = py_tostr(py_arg(1));
+    t_symbol* key = gensym(key_str);
+
+    t_max_err err = hashtab_delete(self->hashtab, key);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to delete key '%s'", key_str);
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: clear()
+static bool Hashtab_clear(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    HashtabObject* self = py_touserdata(py_arg(0));
+
+    if (!self->hashtab) {
+        return RuntimeError("Hashtab is null");
+    }
+
+    t_max_err err = hashtab_clear(self->hashtab);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to clear hashtab");
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: keys()
+static bool Hashtab_keys(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    HashtabObject* self = py_touserdata(py_arg(0));
+
+    if (!self->hashtab) {
+        return RuntimeError("Hashtab is null");
+    }
+
+    long keycount = 0;
+    t_symbol** keys = NULL;
+
+    t_max_err err = hashtab_getkeys(self->hashtab, &keycount, &keys);
+
+    if (err != MAX_ERR_NONE) {
+        return RuntimeError("Failed to get hashtab keys");
+    }
+
+    // Create Python list
+    py_newlistn(py_retval(), keycount);
+
+    for (long i = 0; i < keycount; i++) {
+        py_Ref item = py_list_getitem(py_retval(), i);
+        if (keys[i]) {
+            py_newstr(item, keys[i]->s_name);
+        } else {
+            py_newstr(item, "");
+        }
+    }
+
+    // Note: keys array is owned by hashtab, don't free
+
+    return true;
+}
+
+// Method: has_key(key)
+static bool Hashtab_has_key(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    HashtabObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_str);
+
+    if (!self->hashtab) {
+        return RuntimeError("Hashtab is null");
+    }
+
+    const char* key_str = py_tostr(py_arg(1));
+    t_symbol* key = gensym(key_str);
+
+    t_object* val = NULL;
+    t_max_err err = hashtab_lookup(self->hashtab, key, &val);
+
+    py_newbool(py_retval(), err == MAX_ERR_NONE);
+    return true;
+}
+
+// Method: getsize()
+static bool Hashtab_getsize(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    HashtabObject* self = py_touserdata(py_arg(0));
+
+    if (!self->hashtab) {
+        return RuntimeError("Hashtab is null");
+    }
+
+    t_atom_long size = hashtab_getsize(self->hashtab);
+    py_newint(py_retval(), size);
+    return true;
+}
+
+// Method: pointer()
+static bool Hashtab_pointer(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    HashtabObject* self = py_touserdata(py_arg(0));
+
+    py_i64 ptr = (py_i64)self->hashtab;
+    py_newint(py_retval(), ptr);
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
+// Linklist wrapper - Wrapper for Max linked list objects
+
+typedef struct {
+    t_linklist* linklist;
+    bool owns_linklist;
+} LinklistObject;
+
+static bool Linklist__new__(int argc, py_Ref argv) {
+    py_Type cls = py_totype(argv);
+    LinklistObject* wrapper = py_newobject(py_retval(), cls, 0, sizeof(LinklistObject));
+    wrapper->linklist = linklist_new();
+    wrapper->owns_linklist = true;
+    return true;
+}
+
+static bool Linklist__init__(int argc, py_Ref argv) {
+    // Already created in __new__
+    py_newnone(py_retval());
+    return true;
+}
+
+static void Linklist__del__(void* self) {
+    LinklistObject* wrapper = (LinklistObject*)self;
+    if (wrapper->owns_linklist && wrapper->linklist) {
+        object_free(wrapper->linklist);
+        wrapper->linklist = NULL;
+    }
+}
+
+static bool Linklist__repr__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    LinklistObject* self = py_touserdata(py_arg(0));
+
+    char buf[256];
+    if (self->linklist) {
+        t_atom_long size = linklist_getsize(self->linklist);
+        snprintf(buf, sizeof(buf), "Linklist(size=%ld)", size);
+    } else {
+        snprintf(buf, sizeof(buf), "Linklist(null)");
+    }
+    py_newstr(py_retval(), buf);
+    return true;
+}
+
+// __len__ - Get linklist size
+static bool Linklist__len__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    LinklistObject* self = py_touserdata(py_arg(0));
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    t_atom_long size = linklist_getsize(self->linklist);
+    py_newint(py_retval(), size);
+    return true;
+}
+
+// __getitem__ - Get item by index
+static bool Linklist__getitem__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    LinklistObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    py_i64 index = py_toint(py_arg(1));
+    t_atom_long size = linklist_getsize(self->linklist);
+
+    // Handle negative indices
+    if (index < 0) {
+        index = size + index;
+    }
+
+    if (index < 0 || index >= size) {
+        return IndexError("List index out of range");
+    }
+
+    void* item = linklist_getindex(self->linklist, (long)index);
+
+    if (!item) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    // Return as integer pointer (user can wrap with Object if needed)
+    py_newint(py_retval(), (py_i64)item);
+    return true;
+}
+
+// Method: wrap(pointer)
+static bool Linklist_wrap(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    LinklistObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    py_i64 ptr = py_toint(py_arg(1));
+    if (ptr == 0) {
+        return ValueError("Cannot wrap null pointer");
+    }
+
+    // Free old linklist if we owned it
+    if (self->owns_linklist && self->linklist) {
+        object_free(self->linklist);
+    }
+
+    self->linklist = (t_linklist*)ptr;
+    self->owns_linklist = false;
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: is_null()
+static bool Linklist_is_null(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    LinklistObject* self = py_touserdata(py_arg(0));
+    py_newbool(py_retval(), self->linklist == NULL);
+    return true;
+}
+
+// Method: append(item)
+static bool Linklist_append(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    LinklistObject* self = py_touserdata(py_arg(0));
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    void* item = NULL;
+
+    // Accept Object wrapper or raw pointer
+    if (g_object_type >= 0 && py_checktype(py_arg(1), g_object_type)) {
+        MaxObject* obj_wrapper = py_touserdata(py_arg(1));
+        item = obj_wrapper->obj;
+    } else if (py_isint(py_arg(1))) {
+        item = (void*)py_toint(py_arg(1));
+    } else {
+        return TypeError("Append requires Object or integer pointer");
+    }
+
+    t_atom_long index = linklist_append(self->linklist, item);
+    py_newint(py_retval(), index);
+    return true;
+}
+
+// Method: insertindex(item, index)
+static bool Linklist_insertindex(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    LinklistObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(2, tp_int);
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    void* item = NULL;
+
+    // Accept Object wrapper or raw pointer
+    if (g_object_type >= 0 && py_checktype(py_arg(1), g_object_type)) {
+        MaxObject* obj_wrapper = py_touserdata(py_arg(1));
+        item = obj_wrapper->obj;
+    } else if (py_isint(py_arg(1))) {
+        item = (void*)py_toint(py_arg(1));
+    } else {
+        return TypeError("Insert requires Object or integer pointer");
+    }
+
+    long index = (long)py_toint(py_arg(2));
+    t_atom_long result_index = linklist_insertindex(self->linklist, item, index);
+    py_newint(py_retval(), result_index);
+    return true;
+}
+
+// Method: getindex(index)
+static bool Linklist_getindex(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    LinklistObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    long index = (long)py_toint(py_arg(1));
+    void* item = linklist_getindex(self->linklist, index);
+
+    if (!item) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    py_newint(py_retval(), (py_i64)item);
+    return true;
+}
+
+// Method: chuckindex(index)
+static bool Linklist_chuckindex(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    LinklistObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    long index = (long)py_toint(py_arg(1));
+    long result = linklist_chuckindex(self->linklist, index);
+    py_newint(py_retval(), result);
+    return true;
+}
+
+// Method: deleteindex(index)
+static bool Linklist_deleteindex(int argc, py_Ref argv) {
+    // Alias for chuckindex
+    return Linklist_chuckindex(argc, argv);
+}
+
+// Method: clear()
+static bool Linklist_clear(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    LinklistObject* self = py_touserdata(py_arg(0));
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    linklist_clear(self->linklist);
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: getsize()
+static bool Linklist_getsize(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    LinklistObject* self = py_touserdata(py_arg(0));
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    t_atom_long size = linklist_getsize(self->linklist);
+    py_newint(py_retval(), size);
+    return true;
+}
+
+// Method: reverse()
+static bool Linklist_reverse(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    LinklistObject* self = py_touserdata(py_arg(0));
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    linklist_reverse(self->linklist);
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: rotate(n)
+static bool Linklist_rotate(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    LinklistObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    long n = (long)py_toint(py_arg(1));
+    linklist_rotate(self->linklist, n);
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: shuffle()
+static bool Linklist_shuffle(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    LinklistObject* self = py_touserdata(py_arg(0));
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    linklist_shuffle(self->linklist);
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: swap(a, b)
+static bool Linklist_swap(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    LinklistObject* self = py_touserdata(py_arg(0));
+    PY_CHECK_ARG_TYPE(1, tp_int);
+    PY_CHECK_ARG_TYPE(2, tp_int);
+
+    if (!self->linklist) {
+        return RuntimeError("Linklist is null");
+    }
+
+    long a = (long)py_toint(py_arg(1));
+    long b = (long)py_toint(py_arg(2));
+    linklist_swap(self->linklist, a, b);
+    py_newnone(py_retval());
+    return true;
+}
+
+// Method: pointer()
+static bool Linklist_pointer(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    LinklistObject* self = py_touserdata(py_arg(0));
+
+    py_i64 ptr = (py_i64)self->linklist;
+    py_newint(py_retval(), ptr);
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
 // Utility Functions - Python to Max conversions
 
 // Convert Python value to Atom
@@ -1354,6 +3002,710 @@ static bool print_args(int argc, py_Ref argv) {
 
 
 // ----------------------------------------------------------------------------
+// Atom parsing functions
+
+// Module-level parse function
+static bool api_parse(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PY_CHECK_ARG_TYPE(0, tp_str);
+
+    const char* parsestr = py_tostr(py_arg(0));
+
+    // Parse string into atoms
+    t_atom* av = NULL;
+    long ac = 0;
+    t_max_err err = atom_setparse(&ac, &av, parsestr);
+
+    if (err != MAX_ERR_NONE) {
+        if (av) sysmem_freeptr(av);
+        py_newstr(py_retval(), "Failed to parse string");
+        return false;
+    }
+
+    // Create AtomArray to hold result
+    py_newobject(py_retval(), g_atomarray_type, 0, sizeof(AtomArrayObject));
+    AtomArrayObject* arr_obj = (AtomArrayObject*)py_touserdata(py_retval());
+
+    // Create atomarray and copy atoms
+    arr_obj->atomarray = atomarray_new(ac, av);
+    arr_obj->owns_atomarray = true;
+
+    // Free temporary atoms
+    if (av) sysmem_freeptr(av);
+
+    return true;
+}
+
+// AtomArray.from_parse() class method
+static bool AtomArray_from_parse(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PY_CHECK_ARG_TYPE(0, tp_str);
+
+    const char* parsestr = py_tostr(py_arg(0));
+
+    // Parse string into atoms
+    t_atom* av = NULL;
+    long ac = 0;
+    t_max_err err = atom_setparse(&ac, &av, parsestr);
+
+    if (err != MAX_ERR_NONE) {
+        if (av) sysmem_freeptr(av);
+        py_newstr(py_retval(), "Failed to parse string");
+        return false;
+    }
+
+    // Create AtomArray to hold result
+    py_newobject(py_retval(), g_atomarray_type, 0, sizeof(AtomArrayObject));
+    AtomArrayObject* arr_obj = (AtomArrayObject*)py_touserdata(py_retval());
+
+    // Create atomarray and copy atoms
+    arr_obj->atomarray = atomarray_new(ac, av);
+    arr_obj->owns_atomarray = true;
+
+    // Free temporary atoms
+    if (av) sysmem_freeptr(av);
+
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
+// Object registration and notification functions
+
+// object_register() - Register object in namespace
+static bool api_object_register(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    PY_CHECK_ARG_TYPE(0, tp_str);  // namespace
+    PY_CHECK_ARG_TYPE(1, tp_str);  // name
+    PY_CHECK_ARG_TYPE(2, tp_int);  // object pointer
+
+    const char* ns_str = py_tostr(py_arg(0));
+    const char* name_str = py_tostr(py_arg(1));
+    py_i64 obj_ptr = py_toint(py_arg(2));
+
+    t_symbol* ns = gensym(ns_str);
+    t_symbol* name = gensym(name_str);
+    void* obj = (void*)obj_ptr;
+
+    void* registered = object_register(ns, name, obj);
+
+    // Return pointer to registered object (may be different from input)
+    py_newint(py_retval(), (py_i64)registered);
+    return true;
+}
+
+// object_unregister() - Unregister object
+static bool api_object_unregister(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PY_CHECK_ARG_TYPE(0, tp_int);  // object pointer
+
+    py_i64 obj_ptr = py_toint(py_arg(0));
+    void* obj = (void*)obj_ptr;
+
+    t_max_err err = object_unregister(obj);
+
+    if (err != MAX_ERR_NONE) {
+        py_newstr(py_retval(), "Failed to unregister object");
+        return false;
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// object_findregistered() - Find registered object by namespace and name
+static bool api_object_findregistered(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PY_CHECK_ARG_TYPE(0, tp_str);  // namespace
+    PY_CHECK_ARG_TYPE(1, tp_str);  // name
+
+    const char* ns_str = py_tostr(py_arg(0));
+    const char* name_str = py_tostr(py_arg(1));
+
+    t_symbol* ns = gensym(ns_str);
+    t_symbol* name = gensym(name_str);
+
+    void* obj = object_findregistered(ns, name);
+
+    if (obj == NULL) {
+        py_newnone(py_retval());
+    } else {
+        py_newint(py_retval(), (py_i64)obj);
+    }
+
+    return true;
+}
+
+// object_findregisteredbyptr() - Find namespace and name by object pointer
+static bool api_object_findregisteredbyptr(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    PY_CHECK_ARG_TYPE(0, tp_int);  // object pointer
+
+    py_i64 obj_ptr = py_toint(py_arg(0));
+    void* obj = (void*)obj_ptr;
+
+    t_symbol* ns = NULL;
+    t_symbol* name = NULL;
+
+    t_max_err err = object_findregisteredbyptr(&ns, &name, obj);
+
+    if (err != MAX_ERR_NONE || ns == NULL || name == NULL) {
+        py_newnone(py_retval());
+        return true;
+    }
+
+    // Return tuple (namespace, name)
+    py_newlistn(py_retval(), 2);
+    py_Ref item0 = py_list_getitem(py_retval(), 0);
+    py_Ref item1 = py_list_getitem(py_retval(), 1);
+    py_newstr(item0, ns->s_name);
+    py_newstr(item1, name->s_name);
+
+    return true;
+}
+
+// object_attach() - Attach client to registered object
+static bool api_object_attach(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    PY_CHECK_ARG_TYPE(0, tp_str);  // namespace
+    PY_CHECK_ARG_TYPE(1, tp_str);  // name
+    PY_CHECK_ARG_TYPE(2, tp_int);  // client object pointer
+
+    const char* ns_str = py_tostr(py_arg(0));
+    const char* name_str = py_tostr(py_arg(1));
+    py_i64 client_ptr = py_toint(py_arg(2));
+
+    t_symbol* ns = gensym(ns_str);
+    t_symbol* name = gensym(name_str);
+    void* client = (void*)client_ptr;
+
+    void* registered_obj = object_attach(ns, name, client);
+
+    if (registered_obj == NULL) {
+        py_newnone(py_retval());
+    } else {
+        py_newint(py_retval(), (py_i64)registered_obj);
+    }
+
+    return true;
+}
+
+// object_detach() - Detach client from registered object
+static bool api_object_detach(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    PY_CHECK_ARG_TYPE(0, tp_str);  // namespace
+    PY_CHECK_ARG_TYPE(1, tp_str);  // name
+    PY_CHECK_ARG_TYPE(2, tp_int);  // client object pointer
+
+    const char* ns_str = py_tostr(py_arg(0));
+    const char* name_str = py_tostr(py_arg(1));
+    py_i64 client_ptr = py_toint(py_arg(2));
+
+    t_symbol* ns = gensym(ns_str);
+    t_symbol* name = gensym(name_str);
+    void* client = (void*)client_ptr;
+
+    t_max_err err = object_detach(ns, name, client);
+
+    if (err != MAX_ERR_NONE) {
+        py_newstr(py_retval(), "Failed to detach from object");
+        return false;
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// object_attach_byptr() - Attach to registered object by pointer
+static bool api_object_attach_byptr(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PY_CHECK_ARG_TYPE(0, tp_int);  // client object pointer
+    PY_CHECK_ARG_TYPE(1, tp_int);  // registered object pointer
+
+    py_i64 client_ptr = py_toint(py_arg(0));
+    py_i64 registered_ptr = py_toint(py_arg(1));
+
+    void* client = (void*)client_ptr;
+    void* registered_obj = (void*)registered_ptr;
+
+    t_max_err err = object_attach_byptr(client, registered_obj);
+
+    if (err != MAX_ERR_NONE) {
+        py_newstr(py_retval(), "Failed to attach by pointer");
+        return false;
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// object_detach_byptr() - Detach from registered object by pointer
+static bool api_object_detach_byptr(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PY_CHECK_ARG_TYPE(0, tp_int);  // client object pointer
+    PY_CHECK_ARG_TYPE(1, tp_int);  // registered object pointer
+
+    py_i64 client_ptr = py_toint(py_arg(0));
+    py_i64 registered_ptr = py_toint(py_arg(1));
+
+    void* client = (void*)client_ptr;
+    void* registered_obj = (void*)registered_ptr;
+
+    t_max_err err = object_detach_byptr(client, registered_obj);
+
+    if (err != MAX_ERR_NONE) {
+        py_newstr(py_retval(), "Failed to detach by pointer");
+        return false;
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// object_notify() - Send notification to attached clients
+static bool api_object_notify(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    PY_CHECK_ARG_TYPE(0, tp_int);  // object pointer
+    PY_CHECK_ARG_TYPE(1, tp_str);  // message symbol
+    PY_CHECK_ARG_TYPE(2, tp_int);  // data pointer (can be NULL/0)
+
+    py_i64 obj_ptr = py_toint(py_arg(0));
+    const char* msg_str = py_tostr(py_arg(1));
+    py_i64 data_ptr = py_toint(py_arg(2));
+
+    void* obj = (void*)obj_ptr;
+    t_symbol* msg = gensym(msg_str);
+    void* data = (void*)data_ptr;
+
+    t_max_err err = object_notify(obj, msg, data);
+
+    if (err != MAX_ERR_NONE) {
+        py_newstr(py_retval(), "Failed to notify");
+        return false;
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
+// Clock wrapper
+
+typedef struct {
+    t_clock* clock;
+    bool owns_clock;
+    py_Ref callback;  // Store Python callback
+    void* owner;      // Store owner object pointer
+} ClockObject;
+
+// Global type
+static py_Type g_clock_type;
+
+// Clock callback function - bridges C to Python
+static void clock_callback_bridge(ClockObject* clock_obj) {
+    if (clock_obj == NULL || clock_obj->callback == NULL) return;
+
+    // Call Python callback
+    py_push(clock_obj->callback);
+    py_pushnil();
+    bool ok = py_vectorcall(0, 0);
+
+    if (!ok) {
+        py_printexc();
+    }
+}
+
+// Clock.__new__
+static bool Clock__new__(int argc, py_Ref argv) {
+    py_newobject(py_retval(), g_clock_type, 0, sizeof(ClockObject));
+    return true;
+}
+
+// Clock.__init__(owner_ptr, callback)
+static bool Clock__init__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PY_CHECK_ARG_TYPE(0, tp_int);     // owner pointer
+    // argv[1] is callback function
+
+    ClockObject* self = (ClockObject*)py_touserdata(py_arg(-1));
+    py_i64 owner_ptr = py_toint(py_arg(0));
+    self->owner = (void*)owner_ptr;
+
+    // Store callback
+    self->callback = py_arg(1);
+    py_setslot(py_arg(-1), 0, self->callback);  // Keep reference
+
+    // Create clock with bridge function
+    self->clock = clock_new(self->owner, (method)clock_callback_bridge);
+    self->owns_clock = true;
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Clock.__del__
+static void Clock__del__(py_Ref self) {
+    ClockObject* clock_obj = (ClockObject*)py_touserdata(self);
+    if (clock_obj->clock && clock_obj->owns_clock) {
+        clock_unset(clock_obj->clock);
+        freeobject((t_object*)clock_obj->clock);
+        clock_obj->clock = NULL;
+    }
+}
+
+// Clock.__repr__
+static bool Clock__repr__(int argc, py_Ref argv) {
+    ClockObject* self = (ClockObject*)py_touserdata(py_arg(0));
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Clock(active=%s)",
+             self->clock ? "True" : "False");
+    py_newstr(py_retval(), buf);
+    return true;
+}
+
+// Clock.delay(milliseconds)
+static bool Clock_delay(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    ClockObject* self = (ClockObject*)py_touserdata(py_arg(0));
+
+    if (self->clock == NULL) {
+        py_newstr(py_retval(), "Clock is null");
+        return false;
+    }
+
+    py_i64 ms = py_toint(py_arg(1));
+    clock_delay(self->clock, (long)ms);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Clock.unset()
+static bool Clock_unset(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(0);
+    ClockObject* self = (ClockObject*)py_touserdata(py_arg(0));
+
+    if (self->clock == NULL) {
+        py_newstr(py_retval(), "Clock is null");
+        return false;
+    }
+
+    clock_unset(self->clock);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Clock.fdelay(milliseconds_float)
+static bool Clock_fdelay(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    ClockObject* self = (ClockObject*)py_touserdata(py_arg(0));
+
+    if (self->clock == NULL) {
+        py_newstr(py_retval(), "Clock is null");
+        return false;
+    }
+
+    double ms = py_tofloat(py_arg(1));
+    clock_fdelay(self->clock, ms);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Clock.pointer()
+static bool Clock_pointer(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(0);
+    ClockObject* self = (ClockObject*)py_touserdata(py_arg(0));
+    py_newint(py_retval(), (py_i64)self->clock);
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
+// Outlet wrapper
+
+typedef struct {
+    void* outlet;
+    bool owns_outlet;
+} OutletObject;
+
+// Global type
+static py_Type g_outlet_type;
+
+// Outlet.__new__
+static bool Outlet__new__(int argc, py_Ref argv) {
+    py_newobject(py_retval(), g_outlet_type, 0, sizeof(OutletObject));
+    return true;
+}
+
+// Outlet.__init__(owner_ptr, type_string)
+static bool Outlet__init__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    PY_CHECK_ARG_TYPE(0, tp_int);   // owner pointer
+    PY_CHECK_ARG_TYPE(1, tp_str);   // outlet type
+
+    OutletObject* self = (OutletObject*)py_touserdata(py_arg(-1));
+    py_i64 owner_ptr = py_toint(py_arg(0));
+    const char* type_str = py_tostr(py_arg(1));
+
+    // Create outlet
+    self->outlet = outlet_new((void*)owner_ptr, type_str);
+    self->owns_outlet = true;
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Outlet.__del__
+static void Outlet__del__(py_Ref self) {
+    OutletObject* outlet_obj = (OutletObject*)py_touserdata(self);
+    // Note: Outlets are typically freed by Max when object is freed
+    // We don't manually free them
+    outlet_obj->outlet = NULL;
+}
+
+// Outlet.__repr__
+static bool Outlet__repr__(int argc, py_Ref argv) {
+    OutletObject* self = (OutletObject*)py_touserdata(py_arg(0));
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Outlet(ptr=0x%llx)", (unsigned long long)self->outlet);
+    py_newstr(py_retval(), buf);
+    return true;
+}
+
+// Outlet.bang()
+static bool Outlet_bang(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(0);
+    OutletObject* self = (OutletObject*)py_touserdata(py_arg(0));
+
+    if (self->outlet == NULL) {
+        py_newstr(py_retval(), "Outlet is null");
+        return false;
+    }
+
+    outlet_bang((t_outlet*)self->outlet);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Outlet.int(value)
+static bool Outlet_int(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    OutletObject* self = (OutletObject*)py_touserdata(py_arg(0));
+
+    if (self->outlet == NULL) {
+        py_newstr(py_retval(), "Outlet is null");
+        return false;
+    }
+
+    py_i64 value = py_toint(py_arg(1));
+    outlet_int((t_outlet*)self->outlet, (t_atom_long)value);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Outlet.float(value)
+static bool Outlet_float(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    OutletObject* self = (OutletObject*)py_touserdata(py_arg(0));
+
+    if (self->outlet == NULL) {
+        py_newstr(py_retval(), "Outlet is null");
+        return false;
+    }
+
+    double value = py_tofloat(py_arg(1));
+    outlet_float((t_outlet*)self->outlet, value);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Outlet.list(atom_array)
+static bool Outlet_list(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    OutletObject* self = (OutletObject*)py_touserdata(py_arg(0));
+
+    if (self->outlet == NULL) {
+        py_newstr(py_retval(), "Outlet is null");
+        return false;
+    }
+
+    // Get AtomArray
+    py_Ref arr_ref = py_arg(1);
+    if (py_typeof(arr_ref) != g_atomarray_type) {
+        py_newstr(py_retval(), "Argument must be AtomArray");
+        return false;
+    }
+
+    AtomArrayObject* arr_obj = (AtomArrayObject*)py_touserdata(arr_ref);
+    if (arr_obj->atomarray == NULL) {
+        py_newstr(py_retval(), "AtomArray is null");
+        return false;
+    }
+
+    long ac;
+    t_atom* av;
+    atomarray_getatoms(arr_obj->atomarray, &ac, &av);
+
+    outlet_list((t_outlet*)self->outlet, NULL, (short)ac, av);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Outlet.anything(symbol, atom_array)
+static bool Outlet_anything(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    OutletObject* self = (OutletObject*)py_touserdata(py_arg(0));
+
+    if (self->outlet == NULL) {
+        py_newstr(py_retval(), "Outlet is null");
+        return false;
+    }
+
+    const char* sym_str = py_tostr(py_arg(1));
+    t_symbol* sym = gensym(sym_str);
+
+    // Get AtomArray
+    py_Ref arr_ref = py_arg(2);
+    if (py_typeof(arr_ref) != g_atomarray_type) {
+        py_newstr(py_retval(), "Argument must be AtomArray");
+        return false;
+    }
+
+    AtomArrayObject* arr_obj = (AtomArrayObject*)py_touserdata(arr_ref);
+    if (arr_obj->atomarray == NULL) {
+        py_newstr(py_retval(), "AtomArray is null");
+        return false;
+    }
+
+    long ac;
+    t_atom* av;
+    atomarray_getatoms(arr_obj->atomarray, &ac, &av);
+
+    outlet_anything((t_outlet*)self->outlet, sym, (short)ac, av);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Outlet.pointer()
+static bool Outlet_pointer(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(0);
+    OutletObject* self = (OutletObject*)py_touserdata(py_arg(0));
+    py_newint(py_retval(), (py_i64)self->outlet);
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
+// Defer functions (module-level)
+
+// Defer callback storage
+typedef struct {
+    py_Ref callback;
+    py_Ref symbol;
+    py_Ref atomarray;
+} DeferData;
+
+// Bridge function for defer
+static void defer_callback_bridge(DeferData* data, t_symbol* s, short argc, t_atom* argv) {
+    if (data == NULL || data->callback == NULL) return;
+
+    // Call Python callback with symbol and atomarray
+    py_push(data->callback);
+    py_pushnil();
+    py_push(data->symbol);
+    py_push(data->atomarray);
+    bool ok = py_vectorcall(2, 0);
+
+    if (!ok) {
+        py_printexc();
+    }
+
+    // Free defer data
+    sysmem_freeptr(data);
+}
+
+// api.defer(owner_ptr, callback, symbol, atomarray)
+static bool api_defer(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(4);
+    PY_CHECK_ARG_TYPE(0, tp_int);   // owner pointer
+    // argv[1] is callback
+    PY_CHECK_ARG_TYPE(2, tp_str);   // symbol
+    // argv[3] is atomarray
+
+    py_i64 owner_ptr = py_toint(py_arg(0));
+    const char* sym_str = py_tostr(py_arg(2));
+    t_symbol* sym = gensym(sym_str);
+
+    // Get atomarray
+    py_Ref arr_ref = py_arg(3);
+    AtomArrayObject* arr_obj = (AtomArrayObject*)py_touserdata(arr_ref);
+    long ac;
+    t_atom* av;
+    atomarray_getatoms(arr_obj->atomarray, &ac, &av);
+
+    // Create defer data (will be freed in bridge)
+    DeferData* data = (DeferData*)sysmem_newptr(sizeof(DeferData));
+    data->callback = py_arg(1);
+    data->symbol = py_arg(2);
+    data->atomarray = py_arg(3);
+
+    // Keep references
+    py_setslot(py_arg(0), 0, data->callback);
+    py_setslot(py_arg(0), 1, data->symbol);
+    py_setslot(py_arg(0), 2, data->atomarray);
+
+    defer((void*)owner_ptr, (method)defer_callback_bridge, sym, (short)ac, av);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// api.defer_low(owner_ptr, callback, symbol, atomarray)
+static bool api_defer_low(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(4);
+    PY_CHECK_ARG_TYPE(0, tp_int);   // owner pointer
+    // argv[1] is callback
+    PY_CHECK_ARG_TYPE(2, tp_str);   // symbol
+    // argv[3] is atomarray
+
+    py_i64 owner_ptr = py_toint(py_arg(0));
+    const char* sym_str = py_tostr(py_arg(2));
+    t_symbol* sym = gensym(sym_str);
+
+    // Get atomarray
+    py_Ref arr_ref = py_arg(3);
+    AtomArrayObject* arr_obj = (AtomArrayObject*)py_touserdata(arr_ref);
+    long ac;
+    t_atom* av;
+    atomarray_getatoms(arr_obj->atomarray, &ac, &av);
+
+    // Create defer data (will be freed in bridge)
+    DeferData* data = (DeferData*)sysmem_newptr(sizeof(DeferData));
+    data->callback = py_arg(1);
+    data->symbol = py_arg(2);
+    data->atomarray = py_arg(3);
+
+    // Keep references
+    py_setslot(py_arg(0), 0, data->callback);
+    py_setslot(py_arg(0), 1, data->symbol);
+    py_setslot(py_arg(0), 2, data->atomarray);
+
+    defer_low((void*)owner_ptr, (method)defer_callback_bridge, sym, (short)ac, av);
+
+    py_newnone(py_retval());
+    return true;
+}
+
+
+// ----------------------------------------------------------------------------
 // initialize
 
 bool api_module_initialize(void) {
@@ -1401,6 +3753,46 @@ bool api_module_initialize(void) {
     py_bindfunc(mod, "atom_getfloat", api_atom_getfloat);
     py_bindfunc(mod, "atom_getsym", api_atom_getsym);
 
+    // Atom parsing functions (module-level)
+    py_bindfunc(mod, "parse", api_parse);
+
+    // Object registration and notification functions (module-level)
+    py_bindfunc(mod, "object_register", api_object_register);
+    py_bindfunc(mod, "object_unregister", api_object_unregister);
+    py_bindfunc(mod, "object_findregistered", api_object_findregistered);
+    py_bindfunc(mod, "object_findregisteredbyptr", api_object_findregisteredbyptr);
+    py_bindfunc(mod, "object_attach", api_object_attach);
+    py_bindfunc(mod, "object_detach", api_object_detach);
+    py_bindfunc(mod, "object_attach_byptr", api_object_attach_byptr);
+    py_bindfunc(mod, "object_detach_byptr", api_object_detach_byptr);
+    py_bindfunc(mod, "object_notify", api_object_notify);
+
+    // Scheduling functions (module-level)
+    py_bindfunc(mod, "defer", api_defer);
+    py_bindfunc(mod, "defer_low", api_defer_low);
+
+    // Clock type
+    g_clock_type = py_newtype("Clock", tp_object, mod, (py_Dtor)Clock__del__);
+    py_bindmethod(g_clock_type, "__new__", Clock__new__);
+    py_bindmethod(g_clock_type, "__init__", Clock__init__);
+    py_bindmethod(g_clock_type, "__repr__", Clock__repr__);
+    py_bindmethod(g_clock_type, "delay", Clock_delay);
+    py_bindmethod(g_clock_type, "fdelay", Clock_fdelay);
+    py_bindmethod(g_clock_type, "unset", Clock_unset);
+    py_bindmethod(g_clock_type, "pointer", Clock_pointer);
+
+    // Outlet type
+    g_outlet_type = py_newtype("Outlet", tp_object, mod, (py_Dtor)Outlet__del__);
+    py_bindmethod(g_outlet_type, "__new__", Outlet__new__);
+    py_bindmethod(g_outlet_type, "__init__", Outlet__init__);
+    py_bindmethod(g_outlet_type, "__repr__", Outlet__repr__);
+    py_bindmethod(g_outlet_type, "bang", Outlet_bang);
+    py_bindmethod(g_outlet_type, "int", Outlet_int);
+    py_bindmethod(g_outlet_type, "float", Outlet_float);
+    py_bindmethod(g_outlet_type, "list", Outlet_list);
+    py_bindmethod(g_outlet_type, "anything", Outlet_anything);
+    py_bindmethod(g_outlet_type, "pointer", Outlet_pointer);
+
     // AtomArray type
     g_atomarray_type = py_newtype("AtomArray", tp_object, mod, (py_Dtor)AtomArray__del__);
     py_bindmethod(g_atomarray_type, "__new__", AtomArray__new__);
@@ -1414,6 +3806,7 @@ bool api_module_initialize(void) {
     py_bindmethod(g_atomarray_type, "clear", AtomArray_clear);
     py_bindmethod(g_atomarray_type, "to_list", AtomArray_to_list);
     py_bindmethod(g_atomarray_type, "duplicate", AtomArray_duplicate);
+    py_bindmethod(g_atomarray_type, "from_parse", AtomArray_from_parse);
 
     // Dictionary type
     g_dictionary_type = py_newtype("Dictionary", tp_object, mod, (py_Dtor)Dictionary__del__);
@@ -1435,6 +3828,99 @@ bool api_module_initialize(void) {
     py_bindmethod(g_dictionary_type, "read", Dictionary_read);
     py_bindmethod(g_dictionary_type, "write", Dictionary_write);
     py_bindmethod(g_dictionary_type, "dump", Dictionary_dump);
+
+    // Object type
+    g_object_type = py_newtype("Object", tp_object, mod, (py_Dtor)Object__del__);
+    py_bindmethod(g_object_type, "__new__", Object__new__);
+    py_bindmethod(g_object_type, "__init__", Object__init__);
+    py_bindmethod(g_object_type, "__repr__", Object__repr__);
+    py_bindmethod(g_object_type, "create", Object_create);
+    py_bindmethod(g_object_type, "wrap", Object_wrap);
+    py_bindmethod(g_object_type, "free", Object_free_method);
+    py_bindmethod(g_object_type, "is_null", Object_is_null);
+    py_bindmethod(g_object_type, "classname", Object_classname);
+    py_bindmethod(g_object_type, "method", Object_method);
+    py_bindmethod(g_object_type, "getattr", Object_getattr);
+    py_bindmethod(g_object_type, "setattr", Object_setattr);
+    py_bindmethod(g_object_type, "attrnames", Object_attrnames);
+    py_bindmethod(g_object_type, "pointer", Object_pointer);
+
+    // Box type
+    g_box_type = py_newtype("Box", tp_object, mod, (py_Dtor)Box__del__);
+    py_bindmethod(g_box_type, "__new__", Box__new__);
+    py_bindmethod(g_box_type, "__init__", Box__init__);
+    py_bindmethod(g_box_type, "__repr__", Box__repr__);
+    py_bindmethod(g_box_type, "wrap", Box_wrap);
+    py_bindmethod(g_box_type, "is_null", Box_is_null);
+    py_bindmethod(g_box_type, "classname", Box_classname);
+    py_bindmethod(g_box_type, "get_object", Box_get_object);
+    py_bindmethod(g_box_type, "get_rect", Box_get_rect);
+    py_bindmethod(g_box_type, "set_rect", Box_set_rect);
+    py_bindmethod(g_box_type, "pointer", Box_pointer);
+
+    // Patcher type
+    g_patcher_type = py_newtype("Patcher", tp_object, mod, (py_Dtor)Patcher__del__);
+    py_bindmethod(g_patcher_type, "__new__", Patcher__new__);
+    py_bindmethod(g_patcher_type, "__init__", Patcher__init__);
+    py_bindmethod(g_patcher_type, "__repr__", Patcher__repr__);
+    py_bindmethod(g_patcher_type, "wrap", Patcher_wrap);
+    py_bindmethod(g_patcher_type, "is_null", Patcher_is_null);
+    py_bindmethod(g_patcher_type, "get_firstobject", Patcher_get_firstobject);
+    py_bindmethod(g_patcher_type, "get_lastobject", Patcher_get_lastobject);
+    py_bindmethod(g_patcher_type, "newobject", Patcher_newobject);
+    py_bindmethod(g_patcher_type, "deleteobj", Patcher_deleteobj);
+    py_bindmethod(g_patcher_type, "set_locked", Patcher_set_locked);
+    py_bindmethod(g_patcher_type, "get_title", Patcher_get_title);
+    py_bindmethod(g_patcher_type, "set_title", Patcher_set_title);
+    py_bindmethod(g_patcher_type, "get_rect", Patcher_get_rect);
+    py_bindmethod(g_patcher_type, "set_rect", Patcher_set_rect);
+    py_bindmethod(g_patcher_type, "get_parentpatcher", Patcher_get_parentpatcher);
+    py_bindmethod(g_patcher_type, "get_toppatcher", Patcher_get_toppatcher);
+    py_bindmethod(g_patcher_type, "set_dirty", Patcher_set_dirty);
+    py_bindmethod(g_patcher_type, "count", Patcher_count);
+    py_bindmethod(g_patcher_type, "pointer", Patcher_pointer);
+
+    // Hashtab type
+    g_hashtab_type = py_newtype("Hashtab", tp_object, mod, (py_Dtor)Hashtab__del__);
+    py_bindmethod(g_hashtab_type, "__new__", Hashtab__new__);
+    py_bindmethod(g_hashtab_type, "__init__", Hashtab__init__);
+    py_bindmethod(g_hashtab_type, "__repr__", Hashtab__repr__);
+    py_bindmethod(g_hashtab_type, "__len__", Hashtab__len__);
+    py_bindmethod(g_hashtab_type, "__contains__", Hashtab__contains__);
+    py_bindmethod(g_hashtab_type, "__getitem__", Hashtab__getitem__);
+    py_bindmethod(g_hashtab_type, "__setitem__", Hashtab__setitem__);
+    py_bindmethod(g_hashtab_type, "wrap", Hashtab_wrap);
+    py_bindmethod(g_hashtab_type, "is_null", Hashtab_is_null);
+    py_bindmethod(g_hashtab_type, "store", Hashtab_store);
+    py_bindmethod(g_hashtab_type, "lookup", Hashtab_lookup);
+    py_bindmethod(g_hashtab_type, "delete", Hashtab_delete);
+    py_bindmethod(g_hashtab_type, "clear", Hashtab_clear);
+    py_bindmethod(g_hashtab_type, "keys", Hashtab_keys);
+    py_bindmethod(g_hashtab_type, "has_key", Hashtab_has_key);
+    py_bindmethod(g_hashtab_type, "getsize", Hashtab_getsize);
+    py_bindmethod(g_hashtab_type, "pointer", Hashtab_pointer);
+
+    // Linklist type
+    g_linklist_type = py_newtype("Linklist", tp_object, mod, (py_Dtor)Linklist__del__);
+    py_bindmethod(g_linklist_type, "__new__", Linklist__new__);
+    py_bindmethod(g_linklist_type, "__init__", Linklist__init__);
+    py_bindmethod(g_linklist_type, "__repr__", Linklist__repr__);
+    py_bindmethod(g_linklist_type, "__len__", Linklist__len__);
+    py_bindmethod(g_linklist_type, "__getitem__", Linklist__getitem__);
+    py_bindmethod(g_linklist_type, "wrap", Linklist_wrap);
+    py_bindmethod(g_linklist_type, "is_null", Linklist_is_null);
+    py_bindmethod(g_linklist_type, "append", Linklist_append);
+    py_bindmethod(g_linklist_type, "insertindex", Linklist_insertindex);
+    py_bindmethod(g_linklist_type, "getindex", Linklist_getindex);
+    py_bindmethod(g_linklist_type, "chuckindex", Linklist_chuckindex);
+    py_bindmethod(g_linklist_type, "deleteindex", Linklist_deleteindex);
+    py_bindmethod(g_linklist_type, "clear", Linklist_clear);
+    py_bindmethod(g_linklist_type, "getsize", Linklist_getsize);
+    py_bindmethod(g_linklist_type, "reverse", Linklist_reverse);
+    py_bindmethod(g_linklist_type, "rotate", Linklist_rotate);
+    py_bindmethod(g_linklist_type, "shuffle", Linklist_shuffle);
+    py_bindmethod(g_linklist_type, "swap", Linklist_swap);
+    py_bindmethod(g_linklist_type, "pointer", Linklist_pointer);
 
     // Person type (demo code)
     py_Type person_type = py_newtype("Person", tp_object, mod, NULL);

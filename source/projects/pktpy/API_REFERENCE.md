@@ -190,6 +190,7 @@ None (use methods to access data).
 - `clear()`: Remove all elements
 - `to_list()`: Convert to Python list
 - `duplicate()`: Create a copy of the array
+- `from_parse(string)`: Class method - parse string into AtomArray
 
 #### Examples
 
@@ -247,6 +248,50 @@ arr.append(a2)
 atom = arr[0]
 print(int(atom))     # 42
 print(float(atom))   # 42.0
+```
+
+#### Parsing Strings
+
+```python
+# Parse string into AtomArray (module-level function)
+arr = api.parse("hello world 42 3.14")
+print(len(arr))          # 4
+print(arr[0])            # Atom('hello')
+print(arr[1])            # Atom('world')
+print(int(arr[2]))       # 42
+print(float(arr[3]))     # 3.14
+
+# Using class method
+arr = api.AtomArray.from_parse("bang 100")
+print(len(arr))          # 2
+print(str(arr[0]))       # "bang"
+print(int(arr[1]))       # 100
+
+# Parse empty string
+arr = api.parse("")
+print(len(arr))          # 0
+
+# Parse numbers
+arr = api.parse("1 2 3 4.5 6.7")
+for i in range(len(arr)):
+    print(f"{i}: {arr[i].type} = {arr[i].value}")
+# Output:
+#   0: long = 1
+#   1: long = 2
+#   2: long = 3
+#   3: float = 4.5
+#   4: float = 6.7
+
+# Parse symbols
+arr = api.parse("metro sine list")
+py_list = arr.to_list()
+print(py_list)          # ['metro', 'sine', 'list']
+
+# Modify parsed atoms
+arr = api.parse("10 20 30")
+arr[0] = 100
+arr.append(40)
+print(arr.to_list())    # [100, 20, 30, 40]
 ```
 
 #### Memory Management
@@ -451,6 +496,1178 @@ arr = api.AtomArray([1, 2, 3])
 d["data"] = arr.duplicate()
 # Now you can still use arr
 ```
+
+---
+
+### api.Object
+
+Wrapper for Max's `t_object*` type. Provides generic access to any Max object, allowing you to wrap existing objects, create new ones, access attributes, and call methods.
+
+#### Constructor
+
+```python
+Object()     # Create empty wrapper (null object)
+```
+
+#### Methods
+
+**Object Management:**
+- `create(classname, *args)`: Create new Max object (takes ownership)
+- `wrap(pointer)`: Wrap existing object pointer (no ownership)
+- `free()`: Manually free owned object
+- `is_null()`: Returns True if object pointer is null
+
+**Object Information:**
+- `classname()`: Returns class name as string
+- `pointer()`: Returns raw pointer value as integer
+
+**Attribute Access:**
+- `getattr(name)`: Get attribute value (returns single value or list)
+- `setattr(name, value)`: Set attribute value
+- `attrnames()`: Returns list of all attribute names
+
+**Method Calling:**
+- `method(name, *args)`: Call object method with optional arguments
+
+#### Ownership Rules
+
+1. **Created objects** (via `create()`) → Owned, will be freed
+2. **Wrapped objects** (via `wrap()`) → Not owned, won't be freed
+3. **Destructor** → Automatically frees owned objects
+4. **Manual free** → Use `free()` to free before destructor
+
+#### Examples
+
+**Wrapping Existing Objects:**
+
+```python
+import api
+
+# Wrap an existing Max object (pointer from Max context)
+obj = api.Object()
+obj.wrap(max_object_pointer)
+
+# Check if valid
+if not obj.is_null():
+    name = obj.classname()
+    api.post(f"Wrapped {name} object\n")
+```
+
+**Attribute Access:**
+
+```python
+# Get object attributes
+obj = api.Object()
+obj.wrap(some_buffer_object)
+
+# Single attribute
+size = obj.getattr("size")
+api.post(f"Buffer size: {size}\n")
+
+# Set attribute
+obj.setattr("size", 2048)
+
+# List all attributes
+attrs = obj.attrnames()
+for attr in attrs:
+    try:
+        value = obj.getattr(attr)
+        api.post(f"{attr}: {value}\n")
+    except:
+        pass
+```
+
+**Calling Methods:**
+
+```python
+# Call methods on Max objects
+obj = api.Object()
+obj.wrap(some_max_object)
+
+# No arguments
+obj.method("clear")
+
+# With arguments
+result = obj.method("getvalue", 100)
+
+# With multiple arguments
+obj.method("set", 10, 20, 30)
+```
+
+**Creating New Objects:**
+
+```python
+# Create new Max object (requires registered class)
+obj = api.Object()
+
+try:
+    # Create with classname and arguments
+    obj.create("buffer~", "mybuffer", 1000)
+    api.post(f"Created: {obj.classname()}\n")
+except Exception as e:
+    api.error(f"Failed to create: {e}\n")
+```
+
+**Ownership Example:**
+
+```python
+# Owned object (will be freed)
+obj1 = api.Object()
+obj1.create("someclass")  # obj1 owns this
+
+# Wrapped object (won't be freed)
+obj2 = api.Object()
+obj2.wrap(external_pointer)  # obj2 doesn't own this
+
+# Manual cleanup
+obj1.free()  # Explicitly free
+# obj1 is now null
+
+# obj2 won't be freed when it goes out of scope
+```
+
+**Pointer Management:**
+
+```python
+# Get pointer value
+obj = api.Object()
+obj.wrap(some_object)
+
+ptr = obj.pointer()
+api.post(f"Object pointer: 0x{ptr:x}\n")
+
+# Pass pointer to another wrapper
+obj2 = api.Object()
+obj2.wrap(ptr)
+```
+
+**Working with Buffer Objects:**
+
+```python
+# Example: Working with buffer~ objects
+# (Requires actual buffer~ object from Max context)
+
+buffer_obj = api.Object()
+buffer_obj.wrap(buffer_pointer)
+
+# Get buffer properties
+size_ms = buffer_obj.getattr("size_ms")
+channels = buffer_obj.getattr("channels")
+
+api.post(f"Buffer: {size_ms}ms, {channels} channels\n")
+
+# Modify buffer
+buffer_obj.setattr("size_ms", 500.0)
+buffer_obj.method("clear")
+```
+
+**Patcher Object Example:**
+
+```python
+# Example: Accessing patcher objects
+# (Requires patcher object from Max context)
+
+patcher = api.Object()
+patcher.wrap(patcher_pointer)
+
+# Get patcher info
+name = patcher.getattr("name")
+api.post(f"Patcher: {name}\n")
+
+# Query patcher
+box_count = patcher.method("count")
+api.post(f"Number of objects: {box_count}\n")
+```
+
+#### Error Handling
+
+```python
+obj = api.Object()
+
+try:
+    # Attempt to create object
+    obj.create("unknown_class")
+except RuntimeError as e:
+    api.error(f"Creation failed: {e}\n")
+
+try:
+    # Attempt to access attribute
+    value = obj.getattr("nonexistent_attr")
+except RuntimeError as e:
+    api.error(f"Attribute access failed: {e}\n")
+```
+
+#### Use Cases
+
+1. **Dynamic Object Creation**: Create Max objects at runtime
+2. **Object Introspection**: Query object properties and capabilities
+3. **Attribute Manipulation**: Get/set object attributes programmatically
+4. **Method Invocation**: Call object methods from Python
+5. **Integration**: Bridge between Python scripts and Max objects
+
+#### Limitations
+
+- Objects must be registered with Max to use `create()`
+- Method calling uses `object_method_typed()` (may not work for all methods)
+- Attribute access requires proper Max attribute implementation
+- Pointer management requires understanding of Max object lifetimes
+
+---
+
+### api.Hashtab
+
+Wrapper for Max's `t_hashtab*` type. Hashtables provide fast key-value storage using symbol keys.
+
+#### Constructor
+
+```python
+Hashtab()     # Create new empty hashtab
+```
+
+#### Magic Methods
+
+- `__len__()`: Returns number of entries (enables `len(h)`)
+- `__contains__(key)`: Check if key exists (enables `key in h`)
+- `__getitem__(key)`: Get value by key (enables `h[key]`)
+- `__setitem__(key, value)`: Set value by key (enables `h[key] = value`)
+- `__repr__()`: Returns string representation like `Hashtab(entries=N)`
+
+#### Methods
+
+**Object Management:**
+- `wrap(pointer)`: Wrap existing hashtab pointer (no ownership)
+- `is_null()`: Returns True if hashtab pointer is null
+- `pointer()`: Returns raw pointer value as integer
+
+**Key-Value Operations:**
+- `store(key, value)`: Store value (int, float, or string) with key
+- `lookup(key)`: Lookup value by key (returns value or None)
+- `delete(key)`: Remove entry by key
+- `clear()`: Remove all entries
+
+**Query:**
+- `keys()`: Returns list of all keys (as strings)
+- `has_key(key)`: Returns True if key exists
+- `getsize()`: Returns number of entries
+
+#### Supported Value Types
+
+Hashtab values can be:
+- `int` → stored as long
+- `float` → stored as float
+- `str` → stored as symbol
+
+#### Examples
+
+**Basic Usage:**
+
+```python
+import api
+
+# Create hashtab
+h = api.Hashtab()
+
+# Store values
+h["count"] = 10
+h["ratio"] = 0.5
+h["name"] = "test"
+
+# Access values
+print(h["count"])       # 10
+print(h["ratio"])       # 0.5
+print(h["name"])        # "test"
+
+# Check membership
+print("count" in h)     # True
+print("missing" in h)   # False
+
+# Get size
+print(len(h))           # 3
+```
+
+**Using Methods:**
+
+```python
+h = api.Hashtab()
+
+# Store using method
+h.store("value", 42)
+h.store("pi", 3.14159)
+h.store("label", "demo")
+
+# Lookup using method
+val = h.lookup("value")     # 42
+pi = h.lookup("pi")          # 3.14159
+missing = h.lookup("missing") # None
+
+# Get all keys
+all_keys = h.keys()
+print(all_keys)  # ['value', 'pi', 'label']
+
+# Iterate
+for key in h.keys():
+    print(f"{key}: {h[key]}")
+```
+
+**Deletion:**
+
+```python
+h = api.Hashtab()
+h["a"] = 1
+h["b"] = 2
+h["c"] = 3
+
+# Delete single entry
+h.delete("b")
+print(len(h))  # 2
+
+# Clear all
+h.clear()
+print(len(h))  # 0
+```
+
+**Wrapping Existing Hashtabs:**
+
+```python
+# Wrap hashtab from Max context
+h = api.Hashtab()
+h.wrap(hashtab_pointer)
+
+if not h.is_null():
+    # Access existing hashtab data
+    for key in h.keys():
+        value = h[key]
+        api.post(f"{key} = {value}\n")
+```
+
+#### Ownership Notes
+
+- New hashtabs (via constructor) are owned and will be freed
+- Wrapped hashtabs (via `wrap()`) are not owned
+
+---
+
+### api.Linklist
+
+Wrapper for Max's `t_linklist*` type. Linklists are doubly-linked lists of object pointers.
+
+#### Constructor
+
+```python
+Linklist()     # Create new empty linklist
+```
+
+#### Magic Methods
+
+- `__len__()`: Returns number of items (enables `len(lst)`)
+- `__getitem__(index)`: Get pointer at index (enables `lst[i]`)
+- `__repr__()`: Returns string representation like `Linklist(size=N)`
+
+#### Methods
+
+**Object Management:**
+- `wrap(pointer)`: Wrap existing linklist pointer (no ownership)
+- `is_null()`: Returns True if linklist pointer is null
+- `pointer()`: Returns raw pointer value as integer
+
+**Adding Items:**
+- `append(pointer)`: Append object pointer to end
+- `insertindex(index, pointer)`: Insert pointer at index
+
+**Accessing Items:**
+- `getindex(index)`: Get pointer at index (returns integer)
+- `getsize()`: Returns number of items
+
+**Removing Items:**
+- `chuckindex(index)`: Remove item at index
+- `deleteindex(index)`: Delete item at index (same as chuckindex)
+- `clear()`: Remove all items
+
+**Reordering:**
+- `reverse()`: Reverse order of items
+- `rotate(n)`: Rotate items by n positions
+- `shuffle()`: Randomly shuffle items
+- `swap(i, j)`: Swap items at indices i and j
+
+#### Examples
+
+**Basic Usage:**
+
+```python
+import api
+
+# Create linklist
+lst = api.Linklist()
+
+# Add some object pointers
+obj1_ptr = 0x1000  # Example pointer values
+obj2_ptr = 0x2000
+obj3_ptr = 0x3000
+
+lst.append(obj1_ptr)
+lst.append(obj2_ptr)
+lst.append(obj3_ptr)
+
+print(len(lst))  # 3
+```
+
+**Accessing Items:**
+
+```python
+# Get items by index
+first = lst[0]
+second = lst[1]
+last = lst[-1]  # Negative indexing
+
+# Or use method
+ptr = lst.getindex(0)
+
+# Iterate
+for i in range(len(lst)):
+    ptr = lst[i]
+    api.post(f"Item {i}: 0x{ptr:x}\n")
+```
+
+**Inserting and Removing:**
+
+```python
+lst = api.Linklist()
+lst.append(0x1000)
+lst.append(0x2000)
+lst.append(0x3000)
+
+# Insert at position
+lst.insertindex(1, 0x1500)  # Insert between first and second
+
+# Remove by index
+lst.chuckindex(2)  # Remove third item
+
+# Clear all
+lst.clear()
+print(len(lst))  # 0
+```
+
+**Reordering:**
+
+```python
+lst = api.Linklist()
+for i in range(5):
+    lst.append(i * 0x1000)
+
+# Reverse
+lst.reverse()
+print(lst[0])  # Last item now first
+
+# Rotate
+lst.rotate(2)  # Rotate 2 positions
+
+# Shuffle
+lst.shuffle()  # Random order
+
+# Swap
+lst.swap(0, 4)  # Swap first and last
+```
+
+**Working with Max Objects:**
+
+```python
+# Linklist stores object pointers
+lst = api.Linklist()
+
+# Add object pointers from Max context
+lst.append(box1_pointer)
+lst.append(box2_pointer)
+
+# Wrap pointers with Object wrapper
+for i in range(len(lst)):
+    ptr = lst[i]
+    obj = api.Object()
+    obj.wrap(ptr)
+
+    if not obj.is_null():
+        name = obj.classname()
+        api.post(f"Object {i}: {name}\n")
+```
+
+**Wrapping Existing Linklists:**
+
+```python
+# Wrap linklist from Max (e.g., patcher box list)
+lst = api.Linklist()
+lst.wrap(linklist_pointer)
+
+if not lst.is_null():
+    api.post(f"List has {len(lst)} items\n")
+
+    for i in range(len(lst)):
+        ptr = lst[i]
+        api.post(f"  [{i}] 0x{ptr:x}\n")
+```
+
+#### Ownership Notes
+
+- New linklists (via constructor) are owned and will be freed
+- Wrapped linklists (via `wrap()`) are not owned
+- Linklist does NOT own the objects it points to
+- Only stores pointers, doesn't manage object lifetimes
+
+---
+
+### api.Patcher
+
+Wrapper for Max's `t_object*` (patcher) type. Provides access to patcher objects for querying and manipulating patch structure.
+
+#### Constructor
+
+```python
+Patcher()     # Create empty wrapper (null patcher)
+```
+
+#### Methods
+
+**Object Management:**
+- `wrap(pointer)`: Wrap existing patcher pointer (no ownership)
+- `is_null()`: Returns True if patcher pointer is null
+- `pointer()`: Returns raw pointer value as integer
+
+**Navigation:**
+- `get_firstobject()`: Get pointer to first box in patcher
+- `get_lastobject()`: Get pointer to last box in patcher
+- `get_parentpatcher()`: Get pointer to parent patcher
+- `get_toppatcher()`: Get pointer to top-level patcher
+
+**Object Management:**
+- `newobject(classname)`: Create new object in patcher (returns box pointer)
+- `deleteobj(box_pointer)`: Delete object from patcher
+- `count()`: Returns number of objects in patcher
+
+**Properties:**
+- `get_title()`: Get patcher window title
+- `set_title(title)`: Set patcher window title
+- `get_rect()`: Get patcher window rect as [x, y, width, height]
+- `set_rect(x, y, w, h)`: Set patcher window rect
+
+**State:**
+- `set_locked(locked)`: Lock (True) or unlock (False) patcher
+- `set_dirty(dirty)`: Mark patcher as modified (True) or clean (False)
+
+#### Examples
+
+**Basic Usage:**
+
+```python
+import api
+
+# Wrap patcher from Max context
+p = api.Patcher()
+p.wrap(patcher_pointer)
+
+if not p.is_null():
+    # Get patcher info
+    title = p.get_title()
+    count = p.count()
+    api.post(f"Patcher '{title}' has {count} objects\n")
+```
+
+**Navigating Objects:**
+
+```python
+p = api.Patcher()
+p.wrap(patcher_pointer)
+
+# Get first box
+box_ptr = p.get_firstobject()
+if box_ptr != 0:
+    box = api.Box()
+    box.wrap(box_ptr)
+    name = box.classname()
+    api.post(f"First object: {name}\n")
+
+# Count objects
+total = p.count()
+api.post(f"Total objects: {total}\n")
+```
+
+**Creating and Deleting Objects:**
+
+```python
+p = api.Patcher()
+p.wrap(patcher_pointer)
+
+# Create new object
+box_ptr = p.newobject("gate")
+if box_ptr != 0:
+    api.post("Created gate object\n")
+
+    # Delete it
+    p.deleteobj(box_ptr)
+    api.post("Deleted gate object\n")
+```
+
+**Patcher Hierarchy:**
+
+```python
+p = api.Patcher()
+p.wrap(patcher_pointer)
+
+# Get parent patcher
+parent_ptr = p.get_parentpatcher()
+if parent_ptr != 0:
+    parent = api.Patcher()
+    parent.wrap(parent_ptr)
+    title = parent.get_title()
+    api.post(f"Parent: {title}\n")
+
+# Get top patcher
+top_ptr = p.get_toppatcher()
+if top_ptr != 0:
+    top = api.Patcher()
+    top.wrap(top_ptr)
+    title = top.get_title()
+    api.post(f"Top: {title}\n")
+```
+
+**Window Management:**
+
+```python
+p = api.Patcher()
+p.wrap(patcher_pointer)
+
+# Get window rect
+rect = p.get_rect()  # [x, y, width, height]
+api.post(f"Position: ({rect[0]}, {rect[1]})\n")
+api.post(f"Size: {rect[2]} x {rect[3]}\n")
+
+# Set window position and size
+p.set_rect(100, 100, 800, 600)
+
+# Get/set title
+old_title = p.get_title()
+p.set_title("My Patcher")
+api.post(f"Renamed '{old_title}' to 'My Patcher'\n")
+```
+
+**Lock and Dirty State:**
+
+```python
+p = api.Patcher()
+p.wrap(patcher_pointer)
+
+# Lock patcher
+p.set_locked(True)
+api.post("Patcher locked\n")
+
+# Unlock patcher
+p.set_locked(False)
+api.post("Patcher unlocked\n")
+
+# Mark as modified
+p.set_dirty(True)
+```
+
+#### Use Cases
+
+1. **Patcher Introspection**: Query patcher structure and contents
+2. **Dynamic Object Creation**: Create objects programmatically
+3. **Window Management**: Control patcher window size and position
+4. **Navigation**: Traverse patcher hierarchy
+5. **Automation**: Script patcher modifications
+
+---
+
+### api.Box
+
+Wrapper for Max's `t_object*` (box) type. Represents UI boxes in a patcher.
+
+#### Constructor
+
+```python
+Box()     # Create empty wrapper (null box)
+```
+
+#### Methods
+
+**Object Management:**
+- `wrap(pointer)`: Wrap existing box pointer (no ownership)
+- `is_null()`: Returns True if box pointer is null
+- `pointer()`: Returns raw pointer value as integer
+
+**Box Information:**
+- `classname()`: Returns box class name as string
+- `get_object()`: Get underlying t_object pointer (as integer)
+
+**Position and Size:**
+- `get_rect()`: Get box rect as [x, y, width, height]
+- `set_rect(x, y, w, h)`: Set box position and size
+
+#### Examples
+
+**Basic Usage:**
+
+```python
+import api
+
+# Wrap box from Max context
+b = api.Box()
+b.wrap(box_pointer)
+
+if not b.is_null():
+    # Get box info
+    name = b.classname()
+    api.post(f"Box class: {name}\n")
+```
+
+**Getting Object:**
+
+```python
+b = api.Box()
+b.wrap(box_pointer)
+
+# Get underlying object
+obj_ptr = b.get_object()
+if obj_ptr != 0:
+    obj = api.Object()
+    obj.wrap(obj_ptr)
+
+    # Access object attributes
+    attrs = obj.attrnames()
+    api.post(f"Object has {len(attrs)} attributes\n")
+```
+
+**Position and Size:**
+
+```python
+b = api.Box()
+b.wrap(box_pointer)
+
+# Get current position
+rect = b.get_rect()  # [x, y, width, height]
+api.post(f"Box at ({rect[0]}, {rect[1]})\n")
+api.post(f"Size: {rect[2]} x {rect[3]}\n")
+
+# Move box
+new_x = rect[0] + 50
+new_y = rect[1] + 50
+b.set_rect(new_x, new_y, rect[2], rect[3])
+
+# Resize box
+b.set_rect(rect[0], rect[1], 200, 100)
+```
+
+**Iterating Patcher Boxes:**
+
+```python
+# Get all boxes in patcher
+p = api.Patcher()
+p.wrap(patcher_pointer)
+
+box_ptr = p.get_firstobject()
+while box_ptr != 0:
+    box = api.Box()
+    box.wrap(box_ptr)
+
+    if not box.is_null():
+        name = box.classname()
+        rect = box.get_rect()
+        api.post(f"{name} at ({rect[0]}, {rect[1]})\n")
+
+    # Note: To iterate properly, you'd need next_object()
+    # which isn't currently wrapped
+    break
+```
+
+**Working with Object:**
+
+```python
+# Box wrapper gives access to the visual box
+b = api.Box()
+b.wrap(box_pointer)
+
+# Object wrapper gives access to the underlying Max object
+obj_ptr = b.get_object()
+obj = api.Object()
+obj.wrap(obj_ptr)
+
+# Access box properties
+box_name = b.classname()
+rect = b.get_rect()
+
+# Access object properties
+attrs = obj.attrnames()
+for attr in attrs:
+    try:
+        value = obj.getattr(attr)
+        api.post(f"  {attr}: {value}\n")
+    except:
+        pass
+```
+
+#### Use Cases
+
+1. **Box Introspection**: Query box class and properties
+2. **Layout Management**: Position and size boxes programmatically
+3. **Visual Scripting**: Manipulate patch appearance
+4. **Object Access**: Bridge between visual box and underlying object
+
+#### Relationship to Object
+
+- **Box** represents the visual UI element in the patcher
+- **Object** represents the underlying Max object
+- Use `box.get_object()` to get the object pointer from a box
+- Use object wrapper for attributes/methods, box wrapper for position/size
+
+---
+
+## Parsing Functions
+
+### api.parse(str)
+
+Parse a string into an AtomArray. The string is parsed according to Max's atom syntax rules, automatically determining types (long, float, or symbol).
+
+**Parameters:**
+- `str`: String to parse
+
+**Returns:** AtomArray containing the parsed atoms
+
+**Type Detection Rules:**
+- Integer numbers → long atoms (e.g., "42")
+- Floating-point numbers → float atoms (e.g., "3.14")
+- Everything else → symbol atoms (e.g., "hello")
+
+```python
+import api
+
+# Parse mixed values
+arr = api.parse("hello 42 3.14 world")
+print(len(arr))              # 4
+print(str(arr[0]))           # "hello" (symbol)
+print(int(arr[1]))           # 42 (long)
+print(float(arr[2]))         # 3.14 (float)
+print(str(arr[3]))           # "world" (symbol)
+
+# Parse numbers only
+arr = api.parse("1 2 3 4 5")
+total = sum(int(arr[i]) for i in range(len(arr)))
+print(total)                 # 15
+
+# Parse symbols only
+arr = api.parse("bang float list")
+for i in range(len(arr)):
+    api.post(f"{str(arr[i])}\n")
+
+# Empty string
+arr = api.parse("")
+print(len(arr))              # 0
+
+# Single value
+arr = api.parse("42")
+print(len(arr))              # 1
+print(int(arr[0]))           # 42
+```
+
+**Use Cases:**
+- Converting user input strings to atoms
+- Parsing message content
+- Quick atom array creation
+- Command parsing
+
+**Note:** This function uses Max's `atom_setparse()` C function internally, which follows Max's standard parsing rules.
+
+---
+
+## Object Registration and Notification Functions
+
+Max provides a registration system for objects to communicate with each other. Objects can register themselves in namespaces, and other objects can attach to them to receive notifications.
+
+### api.object_register(namespace, name, pointer)
+
+Register an object in a namespace.
+
+**Parameters:**
+- `namespace` (str): Namespace for registration (e.g., "global", "box", "nobox", or custom)
+- `name` (str): Name of object in namespace
+- `pointer` (int): Pointer to object to register
+
+**Returns:** int - Pointer to registered object (may be different from input)
+
+**Important:** The returned pointer may be different from the input pointer, as Max may duplicate the object. Always use the returned pointer for unregistration.
+
+```python
+import api
+
+# Get object pointer (from Object wrapper or elsewhere)
+obj = api.Object()
+# ... wrap or create object ...
+ptr = obj.pointer()
+
+# Register in custom namespace
+reg_ptr = api.object_register("myspace", "myobject", ptr)
+
+# Store reg_ptr for later unregistration
+```
+
+---
+
+### api.object_unregister(pointer)
+
+Unregister an object from its namespace.
+
+**Parameters:**
+- `pointer` (int): Pointer returned from `object_register()`
+
+**Returns:** None
+
+```python
+# Unregister using pointer from registration
+api.object_unregister(reg_ptr)
+```
+
+---
+
+### api.object_findregistered(namespace, name)
+
+Find a registered object by its namespace and name.
+
+**Parameters:**
+- `namespace` (str): Namespace to search
+- `name` (str): Name of object in namespace
+
+**Returns:** int - Pointer to registered object, or None if not found
+
+```python
+# Find registered object
+ptr = api.object_findregistered("myspace", "myobject")
+if ptr:
+    # Wrap and use it
+    obj = api.Object()
+    obj.wrap(ptr)
+    api.post(f"Found: {obj.classname()}\n")
+```
+
+---
+
+### api.object_findregisteredbyptr(pointer)
+
+Find the namespace and name of a registered object given its pointer.
+
+**Parameters:**
+- `pointer` (int): Pointer to registered object
+
+**Returns:** list - `[namespace, name]` or None if not registered
+
+```python
+# Get registration info from pointer
+info = api.object_findregisteredbyptr(ptr)
+if info:
+    namespace, name = info
+    api.post(f"Registered as {namespace}::{name}\n")
+```
+
+---
+
+### api.object_attach(namespace, name, client_pointer)
+
+Attach a client object to a registered object to receive notifications.
+
+**Parameters:**
+- `namespace` (str): Namespace of registered object
+- `name` (str): Name of registered object
+- `client_pointer` (int): Pointer to client object (the one attaching)
+
+**Returns:** int - Pointer to registered object, or None if not found
+
+```python
+# Client attaches to registered object
+client_ptr = my_client_obj.pointer()
+registered = api.object_attach("myspace", "myobject", client_ptr)
+
+if registered:
+    api.post("Successfully attached\n")
+```
+
+---
+
+### api.object_detach(namespace, name, client_pointer)
+
+Detach a client object from a registered object.
+
+**Parameters:**
+- `namespace` (str): Namespace of registered object
+- `name` (str): Name of registered object
+- `client_pointer` (int): Pointer to client object to detach
+
+**Returns:** None
+
+```python
+# Detach client from registered object
+api.object_detach("myspace", "myobject", client_ptr)
+```
+
+---
+
+### api.object_attach_byptr(client_pointer, registered_pointer)
+
+Attach to a registered object using direct pointers.
+
+**Parameters:**
+- `client_pointer` (int): Pointer to client object
+- `registered_pointer` (int): Pointer to registered object
+
+**Returns:** None
+
+```python
+# Attach using pointers directly
+api.object_attach_byptr(client_ptr, registered_ptr)
+```
+
+---
+
+### api.object_detach_byptr(client_pointer, registered_pointer)
+
+Detach from a registered object using direct pointers.
+
+**Parameters:**
+- `client_pointer` (int): Pointer to client object
+- `registered_pointer` (int): Pointer to registered object
+
+**Returns:** None
+
+```python
+# Detach using pointers directly
+api.object_detach_byptr(client_ptr, registered_ptr)
+```
+
+---
+
+### api.object_notify(object_pointer, message, data_pointer)
+
+Send a notification from a registered object to all attached clients.
+
+**Parameters:**
+- `object_pointer` (int): Pointer to object sending notification
+- `message` (str): Message/event name (e.g., "modified", "changed", "deleted")
+- `data_pointer` (int): Optional pointer to data (use 0 for none)
+
+**Returns:** None
+
+```python
+# Notify all attached clients
+api.object_notify(reg_ptr, "modified", 0)
+
+# Notify with data pointer
+api.object_notify(reg_ptr, "changed", data_ptr)
+```
+
+---
+
+### Complete Example
+
+```python
+import api
+
+# === Provider Object ===
+# Create and register a provider object
+provider = api.Object()
+# ... create or wrap provider object ...
+provider_ptr = provider.pointer()
+
+# Register it
+reg_ptr = api.object_register("myapp", "datasource", provider_ptr)
+api.post("Provider registered\n")
+
+# === Client Objects ===
+# Create client objects that want to listen
+client1 = api.Object()
+client2 = api.Object()
+# ... create or wrap client objects ...
+
+# Clients attach to provider
+api.object_attach("myapp", "datasource", client1.pointer())
+api.object_attach("myapp", "datasource", client2.pointer())
+api.post("Clients attached\n")
+
+# === Notification ===
+# Provider notifies all clients of changes
+api.object_notify(reg_ptr, "data_changed", 0)
+api.post("Notification sent to all clients\n")
+
+# === Cleanup ===
+# Clients detach
+api.object_detach("myapp", "datasource", client1.pointer())
+api.object_detach("myapp", "datasource", client2.pointer())
+
+# Unregister provider
+api.object_unregister(reg_ptr)
+api.post("Provider unregistered\n")
+```
+
+---
+
+### Use Cases
+
+**1. Shared Resources**
+```python
+# Register a shared buffer
+buffer_ptr = api.object_register("buffers", "shared_audio", buf_ptr)
+
+# Multiple processors can find and use it
+processor1_accesses = api.object_findregistered("buffers", "shared_audio")
+processor2_accesses = api.object_findregistered("buffers", "shared_audio")
+```
+
+**2. Event Broadcasting**
+```python
+# Register event broadcaster
+broadcaster_ptr = api.object_register("events", "transport", obj_ptr)
+
+# Listeners attach
+api.object_attach("events", "transport", listener1_ptr)
+api.object_attach("events", "transport", listener2_ptr)
+
+# Broadcast events
+api.object_notify(broadcaster_ptr, "play", 0)
+api.object_notify(broadcaster_ptr, "stop", 0)
+```
+
+**3. State Synchronization**
+```python
+# Register state holder
+state_ptr = api.object_register("state", "project", state_obj_ptr)
+
+# UI elements attach to stay in sync
+api.object_attach("state", "project", ui_slider_ptr)
+api.object_attach("state", "project", ui_display_ptr)
+
+# Notify on state changes
+api.object_notify(state_ptr, "value_changed", value_ptr)
+```
+
+---
+
+### Important Notes
+
+**Pointer Lifetime:**
+- Ensure objects exist before registering
+- Unregister before freeing objects
+- Don't use invalid pointers
+
+**Return Value:**
+- `object_register()` may return a different pointer than provided
+- Always use the returned pointer for unregistration
+
+**UI Objects:**
+- Don't manually register UI objects (they auto-register)
+- Don't attach UI objects to themselves
+
+**Namespaces:**
+- Common: "global", "box", "nobox"
+- Use custom namespaces to avoid conflicts
+- Choose meaningful names
+
+**Notification:**
+- Clients must implement a `notify` method to receive notifications
+- Not all objects support notification
+- Message names are arbitrary strings
 
 ---
 
