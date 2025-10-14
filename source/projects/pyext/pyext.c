@@ -25,6 +25,13 @@ void ext_main(void* r)
     class_addmethod(c, (method)pyext_list,     "list",     A_GIMME,  0);
     class_addmethod(c, (method)pyext_anything, "anything", A_GIMME,  0);
 
+    // Text editor
+    class_addmethod(c, (method)pyext_dblclick, "dblclick", A_CANT,   0);
+    class_addmethod(c, (method)pyext_edclose,  "edclose",  A_CANT,   0);
+    class_addmethod(c, (method)pyext_edsave,   "edsave",   A_CANT,   0);
+    class_addmethod(c, (method)pyext_okclose,  "okclose",  A_CANT,   0);
+    class_addmethod(c, (method)pyext_read,     "read",     A_DEFSYM, 0);
+
     // Script management
     class_addmethod(c, (method)pyext_reload,   "reload",   0);
 
@@ -75,6 +82,13 @@ void* pyext_new(t_symbol* s, long argc, t_atom* argv)
         x->num_outlets = 1;
         x->inlet_num = 0;
 
+        // Initialize text editor
+        x->code = sysmem_newhandle(0);
+        x->code_size = 0;
+        x->code_editor = NULL;
+        x->run_on_save = 0;
+        x->run_on_close = 1;
+
         // Initialize arrays
         for (int i = 0; i < PYEXT_MAX_INLETS; i++) {
             x->inlets[i] = NULL;
@@ -113,6 +127,11 @@ void pyext_free(t_pyext* x)
     if (x->py_instance != NULL) {
         // Python objects are managed by pocketpy's GC
         x->py_instance = NULL;
+    }
+
+    // Free text editor code buffer
+    if (x->code) {
+        sysmem_freehandle(x->code);
     }
 
     // Free inlet proxies
@@ -413,6 +432,159 @@ void pyext_anything(t_pyext* x, t_symbol* s, long argc, t_atom* argv)
 
     // Try to call method with the message name
     pyext_call_method(x, s->s_name, argc, argv);
+}
+
+// ----------------------------------------------------------------------------
+// Text Editor Methods
+
+/**
+ * @brief Double-click handler - opens code editor
+ */
+void pyext_dblclick(t_pyext* x)
+{
+    if (x->code_editor) {
+        // Editor already exists, make it visible
+        object_attr_setchar(x->code_editor, gensym("visible"), 1);
+    } else {
+        // Create new editor
+        x->code_editor = object_new(CLASS_NOBOX, gensym("jed"), x, 0);
+
+        // Load the script file content if we have a loaded script
+        if (x->script_name != gensym("") && x->script_pathname[0] != 0) {
+            // Read the file
+            pyext_doread(x, x->script_name, 0, NULL);
+            // Set the text in editor
+            object_method(x->code_editor, gensym("settext"), *x->code, gensym("utf-8"));
+        }
+
+        object_attr_setchar(x->code_editor, gensym("scratch"), 1);
+        char title[256];
+        snprintf(title, sizeof(title), "pyext: %s", x->script_name->s_name);
+        object_attr_setsym(x->code_editor, gensym("title"), gensym(title));
+    }
+}
+
+/**
+ * @brief Editor close handler - preserves text and optionally reloads
+ */
+void pyext_edclose(t_pyext* x, char** text, long size)
+{
+    // Free old code buffer
+    if (x->code) {
+        sysmem_freehandle(x->code);
+    }
+
+    // Save new text
+    x->code = sysmem_newhandleclear(size + 1);
+    sysmem_copyptr((char*)*text, *x->code, size);
+    x->code_size = size + 1;
+    x->code_editor = NULL;
+
+    // Optionally reload on close
+    if (x->run_on_close && x->code_size > 2) {
+        // Write back to file
+        if (x->script_pathname[0] != 0) {
+            t_filehandle fh;
+            t_max_err err = path_createsysfile(x->script_filename, x->script_path,
+                                              'TEXT', &fh);
+            if (err == MAX_ERR_NONE) {
+                t_ptr_size write_size = (t_ptr_size)size;
+                sysfile_write(fh, &write_size, *x->code);
+                sysfile_close(fh);
+            }
+        }
+        // Reload the script
+        pyext_reload(x);
+    }
+}
+
+/**
+ * @brief Editor save handler - optionally reloads on save
+ */
+t_max_err pyext_edsave(t_pyext* x, char** text, long size)
+{
+    if (x->run_on_save) {
+        object_post((t_object*)x, "run-on-save: reloading script");
+
+        // Save text to code buffer
+        if (x->code) {
+            sysmem_freehandle(x->code);
+        }
+        x->code = sysmem_newhandleclear(size + 1);
+        sysmem_copyptr((char*)*text, *x->code, size);
+        x->code_size = size + 1;
+
+        // Write back to file
+        if (x->script_pathname[0] != 0) {
+            t_filehandle fh;
+            t_max_err err = path_createsysfile(x->script_filename, x->script_path,
+                                              'TEXT', &fh);
+            if (err == MAX_ERR_NONE) {
+                t_ptr_size write_size = (t_ptr_size)size;
+                sysfile_write(fh, &write_size, *x->code);
+                sysfile_close(fh);
+                // Reload the script
+                pyext_reload(x);
+            } else {
+                object_error((t_object*)x, "failed to save script");
+                return MAX_ERR_GENERIC;
+            }
+        }
+    }
+    return MAX_ERR_NONE;
+}
+
+/**
+ * @brief Configure editor close behavior
+ */
+void pyext_okclose(t_pyext* x, char* s, short* result)
+{
+    *result = 3; // Don't put up a dialog
+}
+
+/**
+ * @brief Read script file into editor
+ */
+void pyext_read(t_pyext* x, t_symbol* s)
+{
+    defer((t_object*)x, (method)pyext_doread, s, 0, NULL);
+}
+
+/**
+ * @brief Deferred read function
+ */
+void pyext_doread(t_pyext* x, t_symbol* s, long argc, t_atom* argv)
+{
+    t_max_err err;
+    t_filehandle fh;
+    char filename[MAX_PATH_CHARS];
+    short path;
+
+    // Use provided symbol or current script
+    if (s == gensym("") || s == NULL) {
+        if (x->script_pathname[0] == 0) {
+            object_error((t_object*)x, "no script loaded");
+            return;
+        }
+        strncpy_zero(filename, x->script_filename, MAX_PATH_CHARS);
+        path = x->script_path;
+    } else {
+        strncpy_zero(filename, s->s_name, MAX_PATH_CHARS);
+        if (locatefile_extended(filename, &path, NULL, NULL, 1)) {
+            object_error((t_object*)x, "can't find file: %s", s->s_name);
+            return;
+        }
+    }
+
+    // Read the file
+    err = path_opensysfile(filename, path, &fh, READ_PERM);
+    if (err == MAX_ERR_NONE) {
+        sysfile_readtextfile(fh, x->code, 0, TEXT_LB_UNIX | TEXT_NULL_TERMINATE);
+        sysfile_close(fh);
+        x->code_size = sysmem_handlesize(x->code);
+    } else {
+        object_error((t_object*)x, "error reading file: %s", filename);
+    }
 }
 
 // ----------------------------------------------------------------------------

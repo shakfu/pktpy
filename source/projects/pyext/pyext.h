@@ -37,6 +37,13 @@ typedef struct t_pyext {
     char script_pathname[MAX_PATH_CHARS];     // Full path
     short script_path;                        // Max path ID
 
+    // Text editor
+    t_object* code_editor;                    // Code editor object
+    char** code;                              // Handle to code buffer
+    long code_size;                           // Length of code buffer
+    long run_on_save;                         // Reload script on editor save
+    long run_on_close;                        // Reload script on editor close
+
     // Inlets and outlets
     long num_inlets;                          // Number of inlets
     long num_outlets;                         // Number of outlets
@@ -61,6 +68,14 @@ void pyext_int(t_pyext* x, long n);
 void pyext_float(t_pyext* x, double f);
 void pyext_list(t_pyext* x, t_symbol* s, long argc, t_atom* argv);
 void pyext_anything(t_pyext* x, t_symbol* s, long argc, t_atom* argv);
+
+// text editor
+void pyext_dblclick(t_pyext* x);
+void pyext_edclose(t_pyext* x, char** text, long size);
+t_max_err pyext_edsave(t_pyext* x, char** text, long size);
+void pyext_okclose(t_pyext* x, char* s, short* result);
+void pyext_read(t_pyext* x, t_symbol* s);
+void pyext_doread(t_pyext* x, t_symbol* s, long argc, t_atom* argv);
 
 // script management
 t_max_err pyext_load_script(t_pyext* x, t_symbol* script_name);

@@ -67,11 +67,40 @@ The `api` module provides access to Max functionality:
 - `api.error(msg)` - Print error to Max console
 - More functions available (see pktpy_api.h for full list)
 
-## Reloading Scripts
+## Editing Scripts
 
-Send the `reload` message to reload the Python script:
+### Text Editor
+
+Double-click the `pyext` object to open a built-in text editor showing the Python script content. You can edit the script directly in Max:
+
+1. Double-click the object
+2. Edit the Python code
+3. Close the editor - script automatically reloads (default behavior)
+
+### Editor Behavior
+
+By default:
+- **Save** (Cmd-S) - Saves to file but doesn't reload
+- **Close** - Saves to file and reloads the script
+
+You can customize this behavior with attributes (future feature).
+
+### Manual Reloading
+
+Send the `reload` message to manually reload the Python script:
 ```
 [reload( -> [pyext simple.py]
 ```
 
-This allows for live coding and quick iteration.
+### Read Script
+
+Load a script file into the editor buffer:
+```
+[read scriptname.py( -> [pyext]
+```
+
+This workflow enables:
+- Live coding directly in Max
+- Quick iteration without leaving Max
+- Visual feedback of Python code
+- Similar workflow to the `js` object
