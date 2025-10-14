@@ -13,7 +13,7 @@ class External:
 
     def __init__(self):
         # Configure inlets and outlets
-        self.inlets = 2
+        self.inlets = 1
         self.outlets = 2
 
         # Instance variables

@@ -78,6 +78,11 @@ void* pyext_new(t_symbol* s, long argc, t_atom* argv)
         x->py_instance = NULL;
         x->py_class_type = -1;
         x->script_name = gensym("");
+        x->script_filename[0] = 0;
+        x->script_pathname[0] = 0;
+        x->script_path = 0;
+        x->script_filetype = FOUR_CHAR_CODE('TEXT');
+        x->script_outtype = 0;
         x->num_inlets = 1;
         x->num_outlets = 1;
         x->inlet_num = 0;
@@ -161,7 +166,7 @@ t_max_err pyext_load_script(t_pyext* x, t_symbol* script_name)
     strncpy_zero(x->script_filename, script_name->s_name, MAX_PATH_CHARS);
 
     if (locatefile_extended(x->script_filename, &x->script_path,
-                           NULL, NULL, 1)) {
+                           &x->script_outtype, &x->script_filetype, 1)) {
         object_error((t_object*)x, "can't find script: %s",
                    script_name->s_name);
         goto error;
@@ -569,8 +574,10 @@ void pyext_doread(t_pyext* x, t_symbol* s, long argc, t_atom* argv)
         strncpy_zero(filename, x->script_filename, MAX_PATH_CHARS);
         path = x->script_path;
     } else {
+        t_fourcc filetype = FOUR_CHAR_CODE('TEXT');
+        t_fourcc outtype = 0;
         strncpy_zero(filename, s->s_name, MAX_PATH_CHARS);
-        if (locatefile_extended(filename, &path, NULL, NULL, 1)) {
+        if (locatefile_extended(filename, &path, &outtype, &filetype, 1)) {
             object_error((t_object*)x, "can't find file: %s", s->s_name);
             return;
         }

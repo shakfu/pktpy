@@ -36,6 +36,8 @@ typedef struct t_pyext {
     char script_filename[MAX_PATH_CHARS];     // Resolved filename
     char script_pathname[MAX_PATH_CHARS];     // Full path
     short script_path;                        // Max path ID
+    t_fourcc script_filetype;                 // File type four char code
+    t_fourcc script_outtype;                  // Output type four char code
 
     // Text editor
     t_object* code_editor;                    // Code editor object
