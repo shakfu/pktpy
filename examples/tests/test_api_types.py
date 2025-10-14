@@ -1,205 +1,172 @@
 """
-Test script for api.Atom and api.Symbol types
-
-This script demonstrates usage of the Max types wrapped in Python.
-Run this inside the pktpy Max external using 'execfile' or 'load'.
+Test api.Atom and api.Symbol types
 """
 
 import api
 
-def test_symbol():
-    """Test Symbol wrapper functionality"""
-    api.post("=== Testing Symbol ===\n")
 
-    # Create symbols
+def test_symbol_creation():
+    """Test Symbol creation"""
     s1 = api.Symbol("hello")
     s2 = api.Symbol("world")
-    s3 = api.Symbol("hello")
-
-    # Test string representation
-    api.post(f"s1: {s1}\n")
-    api.post(f"s2: {s2}\n")
-    api.post(f"repr(s1): {repr(s1)}\n")
-
-    # Test name property
-    api.post(f"s1.name: {s1.name}\n")
-
-    # Test equality
-    api.post(f"s1 == s3: {s1 == s3}\n")
-    api.post(f"s1 == s2: {s1 == s2}\n")
-    api.post(f"s1 == 'hello': {s1 == 'hello'}\n")
-
-    # Test gensym
-    s4 = api.gensym("test")
-    api.post(f"gensym('test'): {s4}\n")
-
-    api.post("\n")
+    assert s1.name == "hello"
+    assert s2.name == "world"
 
 
-def test_atom():
-    """Test Atom wrapper functionality"""
-    api.post("=== Testing Atom ===\n")
+def test_symbol_equality():
+    """Test Symbol equality"""
+    s1 = api.Symbol("hello")
+    s2 = api.Symbol("hello")
+    s3 = api.Symbol("world")
+    assert s1 == s2
+    assert s1 != s3
+    assert s1 == "hello"
 
-    # Create atoms of different types
+
+def test_symbol_repr():
+    """Test Symbol string representation"""
+    s1 = api.Symbol("test")
+    assert "test" in str(s1)
+    assert "test" in repr(s1)
+
+
+def test_gensym():
+    """Test gensym function"""
+    s = api.gensym("test")
+    assert s is not None
+    assert hasattr(s, 'name')
+
+
+def test_atom_creation():
+    """Test Atom creation with different types"""
     a_long = api.Atom(42)
     a_float = api.Atom(3.14159)
     a_sym = api.Atom("symbol")
     a_empty = api.Atom()
 
-    # Test repr
-    api.post(f"a_long: {a_long}\n")
-    api.post(f"a_float: {a_float}\n")
-    api.post(f"a_sym: {a_sym}\n")
-    api.post(f"a_empty: {a_empty}\n")
-
-    # Test type property
-    api.post(f"a_long.type: {a_long.type}\n")
-    api.post(f"a_float.type: {a_float.type}\n")
-    api.post(f"a_sym.type: {a_sym.type}\n")
-
-    # Test value property
-    api.post(f"a_long.value: {a_long.value}\n")
-    api.post(f"a_float.value: {a_float.value}\n")
-    api.post(f"a_sym.value: {a_sym.value}\n")
-
-    # Test type checking methods
-    api.post(f"a_long.is_long(): {a_long.is_long()}\n")
-    api.post(f"a_long.is_float(): {a_long.is_float()}\n")
-    api.post(f"a_float.is_float(): {a_float.is_float()}\n")
-    api.post(f"a_sym.is_symbol(): {a_sym.is_symbol()}\n")
-
-    # Test setting values
-    a_empty.value = 100
-    api.post(f"After setting value to 100: {a_empty}\n")
-    api.post(f"a_empty.type: {a_empty.type}\n")
-
-    a_empty.value = 2.718
-    api.post(f"After setting value to 2.718: {a_empty}\n")
-    api.post(f"a_empty.type: {a_empty.type}\n")
-
-    a_empty.value = "changed"
-    api.post(f"After setting value to 'changed': {a_empty}\n")
-    api.post(f"a_empty.type: {a_empty.type}\n")
-
-    api.post("\n")
+    assert a_long.value == 42
+    assert abs(a_float.value - 3.14159) < 0.00001
+    assert a_sym.value == "symbol"
 
 
-def test_atom_conversion():
-    """Test Max atom conversion methods"""
-    api.post("=== Testing Atom Conversion Methods ===\n")
+def test_atom_type_checking():
+    """Test Atom type checking methods"""
+    a_long = api.Atom(42)
+    a_float = api.Atom(3.14)
+    a_sym = api.Atom("test")
 
-    # Create mixed-type atom
+    assert a_long.is_long()
+    assert not a_long.is_float()
+    assert not a_long.is_symbol()
+
+    assert a_float.is_float()
+    assert not a_float.is_long()
+
+    assert a_sym.is_symbol()
+    assert not a_sym.is_long()
+
+
+def test_atom_value_setting():
+    """Test setting Atom values"""
+    a = api.Atom()
+
+    a.value = 100
+    assert a.value == 100
+    assert a.is_long()
+
+    a.value = 2.718
+    assert abs(a.value - 2.718) < 0.001
+    assert a.is_float()
+
+    a.value = "changed"
+    assert a.value == "changed"
+    assert a.is_symbol()
+
+
+def test_atom_getlong():
+    """Test Atom getlong conversion"""
     a = api.Atom(3.7)
+    assert a.getlong() == 3  # truncated
 
-    # Test explicit methods
-    api.post(f"Atom with float 3.7\n")
-    api.post(f"a.getlong(): {a.getlong()} (truncated)\n")
-    api.post(f"a.getfloat(): {a.getfloat()}\n")
-
-    # Change to long
     a.value = 42
-    api.post(f"\nAtom with long 42\n")
-    api.post(f"a.getlong(): {a.getlong()}\n")
-    api.post(f"a.getfloat(): {a.getfloat()} (converted to float)\n")
+    assert a.getlong() == 42
 
-    # Change to symbol
-    a.value = "test"
-    api.post(f"\nAtom with symbol 'test'\n")
+
+def test_atom_getfloat():
+    """Test Atom getfloat conversion"""
+    a = api.Atom(3.7)
+    assert abs(a.getfloat() - 3.7) < 0.1
+
+    a.value = 42
+    assert abs(a.getfloat() - 42.0) < 0.1
+
+
+def test_atom_getsym():
+    """Test Atom getsym conversion"""
+    a = api.Atom("test")
     sym = a.getsym()
-    api.post(f"a.getsym(): {sym}\n")
-    api.post(f"a.getsym().name: {sym.name}\n")
+    assert sym.name == "test"
 
-    # Test module-level functions
-    api.post(f"\nModule-level conversion functions:\n")
+
+def test_atom_module_functions():
+    """Test module-level atom conversion functions"""
     a_int = api.Atom(100)
-    api.post(f"api.atom_getlong(Atom(100)): {api.atom_getlong(a_int)}\n")
+    assert api.atom_getlong(a_int) == 100
 
     a_flt = api.Atom(2.5)
-    api.post(f"api.atom_getfloat(Atom(2.5)): {api.atom_getfloat(a_flt)}\n")
+    assert abs(api.atom_getfloat(a_flt) - 2.5) < 0.1
 
     a_str = api.Atom("hello")
-    sym2 = api.atom_getsym(a_str)
-    api.post(f"api.atom_getsym(Atom('hello')): {sym2}\n")
-
-    api.post("\n")
+    sym = api.atom_getsym(a_str)
+    assert sym.name == "hello"
 
 
-def test_magic_methods():
-    """Test Pythonic magic methods (__int__, __float__, __str__)"""
-    api.post("=== Testing Pythonic Magic Methods ===\n")
-
-    # Test int() conversion
+def test_atom_int_conversion():
+    """Test Atom __int__ magic method"""
     a = api.Atom(3.7)
-    api.post(f"Atom(3.7):\n")
-    api.post(f"  int(a): {int(a)} (truncated)\n")
-    api.post(f"  float(a): {float(a)}\n")
-    api.post(f"  str(a): '{str(a)}'\n")
+    assert int(a) == 3  # truncated
 
-    # Test with integer atom
     a = api.Atom(42)
-    api.post(f"\nAtom(42):\n")
-    api.post(f"  int(a): {int(a)}\n")
-    api.post(f"  float(a): {float(a)} (converted)\n")
-    api.post(f"  str(a): '{str(a)}'\n")
+    assert int(a) == 42
 
-    # Test with symbol atom
+
+def test_atom_float_conversion():
+    """Test Atom __float__ magic method"""
+    a = api.Atom(3.7)
+    assert abs(float(a) - 3.7) < 0.1
+
+    a = api.Atom(42)
+    assert abs(float(a) - 42.0) < 0.1
+
+
+def test_atom_str_conversion():
+    """Test Atom __str__ magic method"""
+    a = api.Atom(42)
+    assert "42" in str(a)
+
+    a = api.Atom(3.14)
+    assert "3.14" in str(a)
+
     a = api.Atom("hello")
-    api.post(f"\nAtom('hello'):\n")
-    api.post(f"  int(a): {int(a)} (symbol->0)\n")
-    api.post(f"  float(a): {float(a)} (symbol->0.0)\n")
-    api.post(f"  str(a): '{str(a)}'\n")
+    assert "hello" in str(a)
 
-    # Use in Python expressions
-    api.post(f"\nPython expressions:\n")
+
+def test_atom_python_expressions():
+    """Test using Atom in Python expressions"""
     a1 = api.Atom(10)
+    assert int(a1) * 2 == 20
+
     a2 = api.Atom(3.5)
-    api.post(f"  int(Atom(10)) * 2 = {int(a1) * 2}\n")
-    api.post(f"  float(Atom(3.5)) + 1.5 = {float(a2) + 1.5}\n")
+    assert abs(float(a2) + 1.5 - 5.0) < 0.1
 
-    # String concatenation
     a3 = api.Atom("world")
-    api.post(f"  'hello ' + str(Atom('world')) = '{\"hello \" + str(a3)}'\n")
-
-    api.post("\n")
+    assert "hello " + str(a3) == "hello world"
 
 
-def test_combined():
-    """Test using Symbol with Atom"""
-    api.post("=== Testing Symbol with Atom ===\n")
-
-    # Create a symbol
+def test_atom_from_symbol():
+    """Test creating Atom from Symbol"""
     sym = api.Symbol("test")
-
-    # Create an atom from the symbol
     atom = api.Atom(sym)
-    api.post(f"Atom from Symbol: {atom}\n")
-    api.post(f"Type: {atom.type}\n")
-    api.post(f"Value: {atom.value}\n")
 
-    api.post("\n")
-
-
-def run_all_tests():
-    """Run all tests"""
-    api.post("====================================\n")
-    api.post("Testing Max API Type Wrappers\n")
-    api.post("====================================\n\n")
-
-    try:
-        test_symbol()
-        test_atom()
-        test_atom_conversion()
-        test_magic_methods()
-        test_combined()
-
-        api.post("====================================\n")
-        api.post("All tests completed successfully!\n")
-        api.post("====================================\n")
-    except Exception as e:
-        api.error(f"Test failed: {e}\n")
-        raise
-
-
-# Run tests when script is executed
-if __name__ == "__main__":
-    run_all_tests()
+    assert atom.is_symbol()
+    assert atom.value == "test"

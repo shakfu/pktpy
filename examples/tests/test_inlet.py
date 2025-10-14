@@ -11,7 +11,7 @@ These examples show the Python API calls that would be used.
 import api
 
 # Example 1: Query existing inlets
-def example_query_inlets(owner_ptr):
+def test_query_inlets(owner_ptr):
     """Query and inspect object's inlets"""
     api.post("=== Query Inlets Example ===")
 
@@ -29,7 +29,7 @@ def example_query_inlets(owner_ptr):
 
 
 # Example 2: Understanding proxy_getinlet()
-def example_proxy_identification(owner_ptr):
+def test_proxy_identification(owner_ptr):
     """Demonstrate identifying which inlet received a message"""
     api.post("=== Proxy Identification Example ===")
 
@@ -108,7 +108,7 @@ class SimulatedMultiInletObject:
 
 
 # Example 4: Typed inlet patterns
-def example_typed_inlet_pattern():
+def test_typed_inlet_pattern():
     """
     Show the pattern for typed inlets.
 
@@ -142,7 +142,7 @@ def example_typed_inlet_pattern():
 
 
 # Example 5: General-purpose inlet pattern
-def example_general_inlet_pattern():
+def test_general_inlet_pattern():
     """Show general-purpose inlet pattern"""
     api.post("=== General-Purpose Inlet Pattern ===")
     api.post("")
@@ -160,7 +160,7 @@ def example_general_inlet_pattern():
 
 
 # Example 6: Inlet method demonstration
-def example_inlet_methods(owner_ptr):
+def test_inlet_methods(owner_ptr):
     """Demonstrate Inlet object methods"""
     api.post("=== Inlet Methods Example ===")
 
@@ -179,7 +179,7 @@ def example_inlet_methods(owner_ptr):
 
 
 # Example 7: Creating inlets with error handling
-def example_inlet_creation_safe(owner_ptr):
+def test_inlet_creation_safe(owner_ptr):
     """Show safe inlet creation with error handling"""
     api.post("=== Safe Inlet Creation Example ===")
 
@@ -246,7 +246,7 @@ class AdvancedProxyObject:
         api.post(f"List in inlet {inlet}: {values}")
 
 
-def run_all_examples():
+def run_all_tests():
     """Run all examples (with mock owner_ptr)"""
     api.post("=" * 60)
     api.post("Inlet API Examples")
@@ -261,17 +261,17 @@ def run_all_examples():
     api.post("In practice, inlets are created during object initialization.")
     api.post("")
 
-    example_typed_inlet_pattern()
+    test_typed_inlet_pattern()
     api.post("")
 
-    example_general_inlet_pattern()
+    test_general_inlet_pattern()
     api.post("")
 
     # The following would work with a real object pointer:
-    # example_query_inlets(real_owner_ptr)
-    # example_proxy_identification(real_owner_ptr)
-    # example_inlet_methods(real_owner_ptr)
-    # example_inlet_creation_safe(real_owner_ptr)
+    # test_query_inlets(real_owner_ptr)
+    # test_proxy_identification(real_owner_ptr)
+    # test_inlet_methods(real_owner_ptr)
+    # test_inlet_creation_safe(real_owner_ptr)
 
     api.post("=" * 60)
     api.post("Examples complete!")
@@ -282,4 +282,4 @@ def run_all_examples():
 
 # Run examples when this file is executed
 if __name__ == "__main__":
-    run_all_examples()
+    run_all_tests()

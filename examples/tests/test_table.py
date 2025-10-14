@@ -18,7 +18,7 @@ Usage:
 
 import api
 
-def table_basic_example():
+def test_table_basic_example():
     """Basic table operations"""
     api.post("=== Basic Table Example ===")
 
@@ -48,7 +48,7 @@ def table_basic_example():
     api.post(f"t[5] = {t[5]}")
 
 
-def table_fill_example():
+def test_table_fill_example():
     """Fill table with pattern"""
     api.post("=== Fill Table Example ===")
 
@@ -71,7 +71,7 @@ def table_fill_example():
     api.post(f"First 10 values: {values[:10]}")
 
 
-def table_waveform_example():
+def test_table_waveform_example():
     """Generate a simple waveform in a table"""
     api.post("=== Waveform Example ===")
 
@@ -93,7 +93,7 @@ def table_waveform_example():
     api.post(f"Generated sine wave with {size} samples")
 
 
-def table_copy_example():
+def test_table_copy_example():
     """Copy data between tables"""
     api.post("=== Copy Table Example ===")
 
@@ -123,7 +123,7 @@ def table_copy_example():
     api.post(f"dst[29] = {dst[29]} (should be 49)")
 
 
-def table_iteration_example():
+def test_table_iteration_example():
     """Iterate over table values"""
     api.post("=== Iteration Example ===")
 
@@ -152,7 +152,7 @@ def table_iteration_example():
     api.post(f"Sum: {sum_val}, Avg: {avg_val}, Max: {max_val}")
 
 
-def table_length_example():
+def test_table_length_example():
     """Using len() with tables"""
     api.post("=== Length Example ===")
 
@@ -170,29 +170,29 @@ def table_length_example():
         t[i] = i % 256
 
 
-def run_all_examples():
+def run_all_tests():
     """Run all examples"""
     api.post("=" * 60)
     api.post("Table API Examples")
     api.post("=" * 60)
 
-    table_basic_example()
+    test_table_basic_example()
     api.post("")
 
-    table_fill_example()
+    test_table_fill_example()
     api.post("")
 
-    table_waveform_example()
+    test_table_waveform_example()
     api.post("")
 
-    table_length_example()
+    test_table_length_example()
     api.post("")
 
-    table_iteration_example()
+    test_table_iteration_example()
     api.post("")
 
     # Copy example requires two tables
-    # table_copy_example()
+    # test_table_copy_example()
 
     api.post("=" * 60)
     api.post("Examples complete!")
@@ -200,4 +200,4 @@ def run_all_examples():
 
 # Run examples when this file is executed
 if __name__ == "__main__":
-    run_all_examples()
+    run_all_tests()

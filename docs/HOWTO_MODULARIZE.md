@@ -12,10 +12,10 @@ The full modularization of pktpy_api.h (5115 lines → 17 modular files) is **do
 
 ## What HAS Been Created
 
-1. **`api/api_common.h`** ✅ - Shared infrastructure (ready to use)
-2. **Complete documentation** ✅ - All in `api/` directory
-3. **Python automation script** ✅ - `scripts/modularize_api.py`
-4. **Step-by-step guides** ✅ - This file and others
+1. **`api/api_common.h`** [x] - Shared infrastructure (ready to use)
+2. **Complete documentation** [x] - All in `api/` directory
+3. **Python automation script** [x] - `scripts/modularize_api.py`
+4. **Step-by-step guides** [x] - This file and others
 
 ## Recommended Approach: Incremental Migration
 
@@ -180,10 +180,10 @@ Or use semi-automated script: ~2 hours (extraction + fixing + testing)
 
 ## Current Status
 
-✅ Infrastructure created (`api_common.h`)
-✅ Documentation complete
-✅ Automation script ready
-⏸️  Actual extraction **not done** - waiting for you to decide when/how
+[x] Infrastructure created (`api_common.h`)
+[x] Documentation complete
+[x] Automation script ready
+⏸  Actual extraction **not done** - waiting for you to decide when/how
 
 ## Decision: What Should I Do?
 

@@ -50,6 +50,7 @@
 #include "api/api_table.h"
 #include "api/api_path.h"
 #include "api/api_database.h"
+#include "api/api_external.h"
 
 // ----------------------------------------------------------------------------
 // custom pktpy2 functions
@@ -225,6 +226,7 @@ py_Type g_table_type = -1;
 py_Type g_path_type = -1;
 py_Type g_database_type = -1;
 py_Type g_dbresult_type = -1;
+py_Type g_pyexternal_type = -1;
 
 // Forward declarations for utility functions
 static bool py_to_atom(py_Ref py_val, t_atom* atom);
@@ -1205,6 +1207,24 @@ bool api_module_initialize(void) {
     py_bindmethod(g_dbresult_type, "to_list", DBResult_to_list);
     py_bindmethod(g_dbresult_type, "reset", DBResult_reset);
     py_bindmethod(g_dbresult_type, "clear", DBResult_clear);
+
+    // External type - wrapper for pktpy external object
+    g_pyexternal_type = py_newtype("External", tp_object, mod, NULL);
+    py_bindmethod(g_pyexternal_type, "__new__", External__new__);
+    py_bindmethod(g_pyexternal_type, "__init__", External__init__);
+    py_bindmethod(g_pyexternal_type, "__str__", External__str__);
+    py_bindmethod(g_pyexternal_type, "__repr__", External__repr__);
+    py_bindmethod(g_pyexternal_type, "get_pointer", External_get_pointer);
+    py_bindmethod(g_pyexternal_type, "is_valid", External_is_valid);
+    py_bindmethod(g_pyexternal_type, "get_outlet_left", External_get_outlet_left);
+    py_bindmethod(g_pyexternal_type, "get_outlet_middle", External_get_outlet_middle);
+    py_bindmethod(g_pyexternal_type, "get_outlet_right", External_get_outlet_right);
+    py_bindmethod(g_pyexternal_type, "get_owner", External_get_owner);
+    py_bindmethod(g_pyexternal_type, "get_patcher", External_get_patcher);
+    py_bindmethod(g_pyexternal_type, "get_name", External_get_name);
+    py_bindmethod(g_pyexternal_type, "post", External_post);
+    py_bindmethod(g_pyexternal_type, "bang_left", External_bang_left);
+    py_bindmethod(g_pyexternal_type, "out", External_out);
 
     // Person type (demo code)
     py_Type person_type = py_newtype("Person", tp_object, mod, NULL);

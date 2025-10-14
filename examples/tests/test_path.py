@@ -12,7 +12,7 @@ Setup in Max:
 
 import api
 
-def example_locate_file():
+def test_locate_file():
     """Find a file in Max's search path"""
     api.post("=== Locate File Example ===")
 
@@ -32,7 +32,7 @@ def example_locate_file():
         api.post("File not found")
 
 
-def example_read_textfile():
+def test_read_textfile():
     """Read a text file"""
     api.post("=== Read Text File Example ===")
 
@@ -63,7 +63,7 @@ def example_read_textfile():
         api.error(f"Error reading file: {e}")
 
 
-def example_write_textfile():
+def test_write_textfile():
     """Write a text file"""
     api.post("=== Write Text File Example ===")
 
@@ -101,7 +101,7 @@ def example_write_textfile():
         api.error(f"Error writing file: {e}")
 
 
-def example_file_chunks():
+def test_file_chunks():
     """Read file in chunks"""
     api.post("=== Read Chunks Example ===")
 
@@ -138,7 +138,7 @@ def example_file_chunks():
         api.error(f"Error: {e}")
 
 
-def example_file_seeking():
+def test_file_seeking():
     """Demonstrate file seeking"""
     api.post("=== File Seeking Example ===")
 
@@ -176,7 +176,7 @@ def example_file_seeking():
         api.error(f"Error: {e}")
 
 
-def example_path_conversion():
+def test_path_conversion():
     """Convert between path styles"""
     api.post("=== Path Conversion Example ===")
 
@@ -211,7 +211,7 @@ def example_path_conversion():
             api.post(f"Error converting {path}: {e}")
 
 
-def example_path_info():
+def test_path_info():
     """Show path information"""
     api.post("=== Path Information Example ===")
 
@@ -234,7 +234,7 @@ def example_path_info():
     api.post(f"Path object path: {p.get_path()}")
 
 
-def example_write_and_read():
+def test_write_and_read():
     """Write then read back a file"""
     api.post("=== Write and Read Back Example ===")
 
@@ -277,32 +277,32 @@ def example_write_and_read():
         api.post(f"Could not delete file: {e}")
 
 
-def run_all_examples():
+def run_all_tests():
     """Run all examples"""
     api.post("=" * 60)
     api.post("Path and File I/O Examples")
     api.post("=" * 60)
     api.post("")
 
-    example_path_info()
+    test_path_info()
     api.post("")
 
-    example_locate_file()
+    test_locate_file()
     api.post("")
 
-    example_path_conversion()
+    test_path_conversion()
     api.post("")
 
-    example_write_textfile()
+    test_write_textfile()
     api.post("")
 
-    example_write_and_read()
+    test_write_and_read()
     api.post("")
 
     # Optional: requires README.md in search path
-    # example_read_textfile()
-    # example_file_chunks()
-    # example_file_seeking()
+    # test_read_textfile()
+    # test_file_chunks()
+    # test_file_seeking()
 
     api.post("=" * 60)
     api.post("Examples complete!")
@@ -310,4 +310,4 @@ def run_all_examples():
 
 # Run examples when this file is executed
 if __name__ == "__main__":
-    run_all_examples()
+    run_all_tests()

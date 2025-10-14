@@ -44,5 +44,6 @@ extern py_Type g_table_type;
 extern py_Type g_path_type;
 extern py_Type g_database_type;
 extern py_Type g_dbresult_type;
+extern py_Type g_pyexternal_type;
 
 #endif // API_COMMON_H

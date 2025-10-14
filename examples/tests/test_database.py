@@ -11,7 +11,7 @@ import api
 
 
 # Example 1: Basic CRUD operations
-def example_basic_crud():
+def test_basic_crud():
     """Create, Read, Update, Delete operations"""
     api.post("=== Basic CRUD Example ===")
 
@@ -58,7 +58,7 @@ def example_basic_crud():
 
 
 # Example 2: Transactions for performance
-def example_transactions():
+def test_transactions():
     """Demonstrate transaction usage for bulk operations"""
     api.post("=== Transaction Example ===")
 
@@ -100,7 +100,7 @@ def example_transactions():
 
 
 # Example 3: Query result processing
-def example_query_results():
+def test_query_results():
     """Different ways to process query results"""
     api.post("=== Query Results Example ===")
 
@@ -148,7 +148,7 @@ def example_query_results():
 
 
 # Example 4: Aggregation and grouping
-def example_aggregation():
+def test_aggregation():
     """SQL aggregation functions"""
     api.post("=== Aggregation Example ===")
 
@@ -204,7 +204,7 @@ def example_aggregation():
 
 
 # Example 5: Dynamic schema evolution
-def example_schema_evolution():
+def test_schema_evolution():
     """Add columns to existing tables"""
     api.post("=== Schema Evolution Example ===")
 
@@ -296,7 +296,7 @@ class ConfigStore:
         self.db.close()
 
 
-def example_config_store():
+def test_config_store():
     """Demonstrate configuration storage"""
     api.post("=== Configuration Store Example ===")
 
@@ -383,7 +383,7 @@ class DataLogger:
         self.db.close()
 
 
-def example_data_logger():
+def test_data_logger():
     """Demonstrate data logging"""
     api.post("=== Data Logger Example ===")
 
@@ -413,7 +413,7 @@ def example_data_logger():
 
 
 # Example 8: Joins and relationships
-def example_joins():
+def test_joins():
     """Demonstrate table joins"""
     api.post("=== Joins Example ===")
 
@@ -475,7 +475,7 @@ def example_joins():
 
 
 # Example 9: Error handling
-def example_error_handling():
+def test_error_handling():
     """Demonstrate proper error handling"""
     api.post("=== Error Handling Example ===")
 
@@ -511,7 +511,7 @@ def example_error_handling():
 
 
 # Example 10: Performance optimization
-def example_performance():
+def test_performance():
     """Demonstrate performance optimization techniques"""
     api.post("=== Performance Example ===")
 
@@ -552,41 +552,41 @@ def example_performance():
     db.close()
 
 
-def run_all_examples():
+def run_all_tests():
     """Run all database examples"""
     api.post("=" * 60)
     api.post("Database API Examples")
     api.post("=" * 60)
     api.post("")
 
-    example_basic_crud()
+    test_basic_crud()
     api.post("")
 
-    example_transactions()
+    test_transactions()
     api.post("")
 
-    example_query_results()
+    test_query_results()
     api.post("")
 
-    example_aggregation()
+    test_aggregation()
     api.post("")
 
-    example_schema_evolution()
+    test_schema_evolution()
     api.post("")
 
-    example_config_store()
+    test_config_store()
     api.post("")
 
-    example_data_logger()
+    test_data_logger()
     api.post("")
 
-    example_joins()
+    test_joins()
     api.post("")
 
-    example_error_handling()
+    test_error_handling()
     api.post("")
 
-    example_performance()
+    test_performance()
 
     api.post("")
     api.post("=" * 60)
@@ -595,4 +595,4 @@ def run_all_examples():
 
 # Run examples when this file is executed
 if __name__ == "__main__":
-    run_all_examples()
+    run_all_tests()
