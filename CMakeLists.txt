@@ -67,7 +67,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     endif()
 endif()
 
-list(APPEND BUILD_TARGETS pktpy)
+list(APPEND BUILD_TARGETS pktpy pyext)
 
 # build shared thirdparty dependencies
 add_subdirectory(${THIRDPARTY_DEPS})
