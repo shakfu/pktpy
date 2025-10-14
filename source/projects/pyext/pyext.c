@@ -234,25 +234,39 @@ t_max_err pyext_load_script(t_pyext* x, t_symbol* script_name)
     x->py_instance = py_retval();
     x->py_class_type = py_typeof(x->py_instance);
 
-    // Query for inlets and outlets count
-    bool has_inlets = py_getattr(x->py_instance, py_name("inlets"));
-    if (has_inlets) {
-        py_GlobalRef inlets_attr = py_retval();
-        if (py_isint(inlets_attr)) {
-            x->num_inlets = py_toint(inlets_attr);
-            if (x->num_inlets < 1) x->num_inlets = 1;
-            if (x->num_inlets > PYEXT_MAX_INLETS) x->num_inlets = PYEXT_MAX_INLETS;
-        }
+    // Debug: Test if we can set an attribute
+    py_Ref test_val = py_getreg(0);
+    py_newint(test_val, 999);
+    bool can_set = py_setattr(x->py_instance, py_name("_test_attr"), test_val);
+    object_post((t_object*)x, "DEBUG: py_setattr test = %s", can_set ? "SUCCESS" : "FAILED");
+    if (!can_set) {
+        py_printexc();
     }
 
-    bool has_outlets = py_getattr(x->py_instance, py_name("outlets"));
-    if (has_outlets) {
-        py_GlobalRef outlets_attr = py_retval();
-        if (py_isint(outlets_attr)) {
-            x->num_outlets = py_toint(outlets_attr);
-            if (x->num_outlets < 1) x->num_outlets = 1;
-            if (x->num_outlets > PYEXT_MAX_OUTLETS) x->num_outlets = PYEXT_MAX_OUTLETS;
-        }
+    // Query for inlets and outlets count using py_getdict (direct __dict__ access)
+    // This bypasses property lookups and gets the actual instance variable
+
+    // Try to get 'inlets' from instance __dict__
+    py_ItemRef inlets_item = py_getdict(x->py_instance, py_name("inlets"));
+    if (inlets_item != NULL && py_isint(inlets_item)) {
+        x->num_inlets = py_toint(inlets_item);
+        object_post((t_object*)x, "DEBUG: read inlets from __dict__ = %ld", x->num_inlets);
+        if (x->num_inlets < 1) x->num_inlets = 1;
+        if (x->num_inlets > PYEXT_MAX_INLETS) x->num_inlets = PYEXT_MAX_INLETS;
+    } else {
+        object_post((t_object*)x, "DEBUG: inlets not in __dict__ or not int");
+    }
+
+    // Try to get 'outlets' from instance __dict__
+    py_ItemRef outlets_item = py_getdict(x->py_instance, py_name("outlets"));
+    if (outlets_item != NULL && py_isint(outlets_item)) {
+        py_i64 raw_outlets = py_toint(outlets_item);
+        x->num_outlets = raw_outlets;
+        object_post((t_object*)x, "DEBUG: read outlets from __dict__ = %lld", raw_outlets);
+        if (x->num_outlets < 1) x->num_outlets = 1;
+        if (x->num_outlets > PYEXT_MAX_OUTLETS) x->num_outlets = PYEXT_MAX_OUTLETS;
+    } else {
+        object_post((t_object*)x, "DEBUG: outlets not in __dict__ or not int");
     }
 
     sysmem_freehandle(code_handle);
@@ -348,8 +362,14 @@ t_max_err pyext_call_method_noargs(t_pyext* x, const char* method_name)
         return MAX_ERR_GENERIC;
     }
 
-    // Look up method
-    bool has_method = py_getattr(x->py_instance, py_name(method_name));
+    // Look up method from the class (not instance) to get unbound function
+    py_GlobalRef py_class = py_getglobal(py_name("External"));
+    if (py_class == NULL) {
+        object_error((t_object*)x, "External class not found");
+        return MAX_ERR_GENERIC;
+    }
+
+    bool has_method = py_getattr(py_class, py_name(method_name));
     if (!has_method) {
         // Method doesn't exist - not an error, just silently return
         return MAX_ERR_NONE;
@@ -361,9 +381,9 @@ t_max_err pyext_call_method_noargs(t_pyext* x, const char* method_name)
         return MAX_ERR_NONE;
     }
 
-    // Call the method
+    // Call the method - push unbound method and instance as first argument
     py_push(method);
-    py_push(x->py_instance);
+    py_push(x->py_instance);  // Pass instance explicitly
     bool ok = py_vectorcall(0, 0);
 
     if (!ok) {
@@ -386,22 +406,29 @@ t_max_err pyext_call_method(t_pyext* x, const char* method_name,
         return MAX_ERR_GENERIC;
     }
 
-    // Look up method
-    bool has_method = py_getattr(x->py_instance, py_name(method_name));
+    // Look up method from the class (not instance) to get unbound function
+    py_GlobalRef py_class = py_getglobal(py_name("External"));
+    if (py_class == NULL) {
+        object_error((t_object*)x, "External class not found");
+        return MAX_ERR_GENERIC;
+    }
+
+    bool has_method = py_getattr(py_class, py_name(method_name));
     if (!has_method) {
         // Method doesn't exist - not an error, just silently return
         return MAX_ERR_NONE;
     }
 
     py_GlobalRef method = py_retval();
+
     if (!py_callable(method)) {
         // Not callable - not an error
         return MAX_ERR_NONE;
     }
 
-    // Setup call
+    // Setup call - push unbound method and instance as first argument
     py_push(method);
-    py_push(x->py_instance);
+    py_push(x->py_instance);  // Pass instance explicitly
 
     // Convert arguments
     for (long i = 0; i < argc; i++) {
