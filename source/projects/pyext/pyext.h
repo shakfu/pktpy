@@ -28,7 +28,7 @@ typedef struct t_pyext {
     t_object ob;                              // Max object header
 
     // Python instance
-    py_GlobalRef py_instance;                 // Python object instance
+    char py_instance_name[128];               // Unique name in global namespace
     py_Type py_class_type;                    // Python class type
 
     // Script info

@@ -11,6 +11,78 @@ t_class* pyext_class = NULL;
 static bool pyext_py_initialized = false;
 
 // ----------------------------------------------------------------------------
+// PyextOutlet - Simple outlet wrapper for pyext
+// We define our own instead of using pktpy's Outlet to avoid conflicts
+
+typedef struct {
+    void* outlet;  // Max outlet pointer
+} PyextOutlet;
+
+static py_Type g_pyext_outlet_type = 0;
+
+// PyextOutlet.int(value)
+static bool pyext_outlet_int(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);  // self + value
+    PY_CHECK_ARG_TYPE(1, tp_int);
+
+    PyextOutlet* self = py_touserdata(py_arg(0));  // self is first arg
+    py_i64 value = py_toint(py_arg(1));  // value is second arg
+
+    if (self->outlet) {
+        outlet_int(self->outlet, (long)value);
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// PyextOutlet.float(value)
+static bool pyext_outlet_float(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);  // self + value
+
+    PyextOutlet* self = py_touserdata(py_arg(0));  // self is first arg
+    double value = 0.0;
+
+    if (py_isint(py_arg(1))) {
+        value = (double)py_toint(py_arg(1));
+    } else if (py_isfloat(py_arg(1))) {
+        value = py_tofloat(py_arg(1));
+    } else {
+        return TypeError("expected int or float");
+    }
+
+    if (self->outlet) {
+        outlet_float(self->outlet, value);
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// PyextOutlet.bang()
+static bool pyext_outlet_bang(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);  // just self, no other args
+
+    PyextOutlet* self = py_touserdata(py_arg(0));  // self is first arg
+
+    if (self->outlet) {
+        outlet_bang(self->outlet);
+    }
+
+    py_newnone(py_retval());
+    return true;
+}
+
+// Register PyextOutlet type
+static void pyext_register_outlet_type() {
+    g_pyext_outlet_type = py_newtype("PyextOutlet", tp_object, NULL, NULL);
+
+    py_bindmethod(g_pyext_outlet_type, "int", pyext_outlet_int);
+    py_bindmethod(g_pyext_outlet_type, "float", pyext_outlet_float);
+    py_bindmethod(g_pyext_outlet_type, "bang", pyext_outlet_bang);
+}
+
+// ----------------------------------------------------------------------------
 // ext_main - external setup
 
 void ext_main(void* r)
@@ -57,6 +129,9 @@ t_max_err pyext_init(t_pyext* x)
         // Initialize API module
         api_module_initialize();
 
+        // Register our PyextOutlet type
+        pyext_register_outlet_type();
+
         pyext_py_initialized = true;
         post("pyext: pocketpy initialized");
     }
@@ -75,7 +150,8 @@ void* pyext_new(t_symbol* s, long argc, t_atom* argv)
         pyext_init(x);
 
         // Initialize instance variables
-        x->py_instance = NULL;
+        snprintf(x->py_instance_name, sizeof(x->py_instance_name),
+                "_pyext_inst_%p", (void*)x);
         x->py_class_type = -1;
         x->script_name = gensym("");
         x->script_filename[0] = 0;
@@ -120,7 +196,7 @@ void* pyext_new(t_symbol* s, long argc, t_atom* argv)
         pyext_setup_inlets_outlets(x);
 
         // Inject outlet wrappers into Python instance
-        if (x->py_instance != NULL) {
+        if (x->py_instance_name[0] != '\0') {
             pyext_inject_outlets(x);
         }
     }
@@ -133,10 +209,11 @@ void* pyext_new(t_symbol* s, long argc, t_atom* argv)
 
 void pyext_free(t_pyext* x)
 {
-    // Free Python instance
-    if (x->py_instance != NULL) {
-        // Python objects are managed by pocketpy's GC
-        x->py_instance = NULL;
+    // Remove Python instance from global namespace
+    if (x->py_instance_name[0] != '\0') {
+        py_Ref r0 = py_getreg(0);
+        py_newnone(r0);
+        py_setglobal(py_name(x->py_instance_name), r0);
     }
 
     // Free text editor code buffer
@@ -231,42 +308,34 @@ t_max_err pyext_load_script(t_pyext* x, t_symbol* script_name)
         goto error;
     }
 
-    x->py_instance = py_retval();
-    x->py_class_type = py_typeof(x->py_instance);
+    // Store instance in global namespace with unique name
+    py_setglobal(py_name(x->py_instance_name), py_retval());
+    x->py_class_type = py_typeof(py_retval());
 
-    // Debug: Test if we can set an attribute
-    py_Ref test_val = py_getreg(0);
-    py_newint(test_val, 999);
-    bool can_set = py_setattr(x->py_instance, py_name("_test_attr"), test_val);
-    object_post((t_object*)x, "DEBUG: py_setattr test = %s", can_set ? "SUCCESS" : "FAILED");
-    if (!can_set) {
-        py_printexc();
-    }
+    object_post((t_object*)x, "stored instance as '%s', type=%d",
+                x->py_instance_name, x->py_class_type);
 
     // Query for inlets and outlets count using py_getdict (direct __dict__ access)
     // This bypasses property lookups and gets the actual instance variable
+    py_GlobalRef instance = py_getglobal(py_name(x->py_instance_name));
 
     // Try to get 'inlets' from instance __dict__
-    py_ItemRef inlets_item = py_getdict(x->py_instance, py_name("inlets"));
+    py_ItemRef inlets_item = py_getdict(instance, py_name("inlets"));
     if (inlets_item != NULL && py_isint(inlets_item)) {
         x->num_inlets = py_toint(inlets_item);
-        object_post((t_object*)x, "DEBUG: read inlets from __dict__ = %ld", x->num_inlets);
+        object_post((t_object*)x, "read inlets from __dict__ = %ld", x->num_inlets);
         if (x->num_inlets < 1) x->num_inlets = 1;
         if (x->num_inlets > PYEXT_MAX_INLETS) x->num_inlets = PYEXT_MAX_INLETS;
-    } else {
-        object_post((t_object*)x, "DEBUG: inlets not in __dict__ or not int");
     }
 
     // Try to get 'outlets' from instance __dict__
-    py_ItemRef outlets_item = py_getdict(x->py_instance, py_name("outlets"));
+    py_ItemRef outlets_item = py_getdict(instance, py_name("outlets"));
     if (outlets_item != NULL && py_isint(outlets_item)) {
         py_i64 raw_outlets = py_toint(outlets_item);
         x->num_outlets = raw_outlets;
-        object_post((t_object*)x, "DEBUG: read outlets from __dict__ = %lld", raw_outlets);
+        object_post((t_object*)x, "read outlets from __dict__ = %lld", raw_outlets);
         if (x->num_outlets < 1) x->num_outlets = 1;
         if (x->num_outlets > PYEXT_MAX_OUTLETS) x->num_outlets = PYEXT_MAX_OUTLETS;
-    } else {
-        object_post((t_object*)x, "DEBUG: outlets not in __dict__ or not int");
     }
 
     sysmem_freehandle(code_handle);
@@ -296,8 +365,12 @@ t_max_err pyext_reload(t_pyext* x)
 
     object_post((t_object*)x, "reloading script: %s", x->script_name->s_name);
 
-    // Clear current instance
-    x->py_instance = NULL;
+    // Clear current instance from globals
+    if (x->py_instance_name[0] != '\0') {
+        py_Ref r0 = py_getreg(0);
+        py_newnone(r0);
+        py_setglobal(py_name(x->py_instance_name), r0);
+    }
 
     // Reload the script
     return pyext_load_script(x, x->script_name);
@@ -326,7 +399,14 @@ t_max_err pyext_setup_inlets_outlets(t_pyext* x)
 
 t_max_err pyext_inject_outlets(t_pyext* x)
 {
-    if (x->py_instance == NULL) {
+    if (x->py_instance_name[0] == '\0') {
+        return MAX_ERR_GENERIC;
+    }
+
+    // Get the instance from globals
+    py_GlobalRef instance = py_getglobal(py_name(x->py_instance_name));
+    if (instance == NULL) {
+        object_error((t_object*)x, "instance not found in globals");
         return MAX_ERR_GENERIC;
     }
 
@@ -334,18 +414,21 @@ t_max_err pyext_inject_outlets(t_pyext* x)
     py_Ref outlets_list = py_getreg(0);
     py_newlistn(outlets_list, x->num_outlets);
 
-    // Populate the list with Outlet objects
+    // Populate the list with PyextOutlet objects
     for (long i = 0; i < x->num_outlets; i++) {
         py_Ref outlet_item = py_list_getitem(outlets_list, i);
 
-        // Create Outlet wrapper object
-        OutletObject* outlet_obj = py_newobject(outlet_item, g_outlet_type, 0, sizeof(OutletObject));
-        outlet_obj->outlet = x->outlets[i];
-        outlet_obj->owns_outlet = false;  // Don't free - owned by Max object
+        // Create PyextOutlet object with userdata
+        PyextOutlet* outlet_obj = py_newobject(outlet_item, g_pyext_outlet_type, 0, sizeof(PyextOutlet));
+        if (outlet_obj) {
+            outlet_obj->outlet = x->outlets[i];
+        } else {
+            object_error((t_object*)x, "failed to allocate PyextOutlet for outlet %ld", i);
+        }
     }
 
     // Set the outlets_list attribute on the Python instance
-    py_setattr(x->py_instance, py_name("_outlets"), outlets_list);
+    py_setattr(instance, py_name("_outlets"), outlets_list);
 
     object_post((t_object*)x, "injected %ld outlet(s) into Python instance", x->num_outlets);
 
@@ -357,34 +440,27 @@ t_max_err pyext_inject_outlets(t_pyext* x)
 
 t_max_err pyext_call_method_noargs(t_pyext* x, const char* method_name)
 {
-    if (x->py_instance == NULL) {
+    if (x->py_instance_name[0] == '\0') {
         object_error((t_object*)x, "no Python instance");
         return MAX_ERR_GENERIC;
     }
 
-    // Look up method from the class (not instance) to get unbound function
-    py_GlobalRef py_class = py_getglobal(py_name("External"));
-    if (py_class == NULL) {
-        object_error((t_object*)x, "External class not found");
+    // Get the instance from globals
+    py_GlobalRef instance = py_getglobal(py_name(x->py_instance_name));
+    if (instance == NULL) {
+        object_error((t_object*)x, "instance not found in globals");
         return MAX_ERR_GENERIC;
     }
 
-    bool has_method = py_getattr(py_class, py_name(method_name));
-    if (!has_method) {
+    // Try to get the method attribute
+    if (!py_getattr(instance, py_name(method_name))) {
         // Method doesn't exist - not an error, just silently return
         return MAX_ERR_NONE;
     }
 
-    py_GlobalRef method = py_retval();
-    if (!py_callable(method)) {
-        // Not callable - not an error
-        return MAX_ERR_NONE;
-    }
-
-    // Call the method - push unbound method and instance as first argument
-    py_push(method);
-    py_push(x->py_instance);  // Pass instance explicitly
-    bool ok = py_vectorcall(0, 0);
+    // The method is now in py_retval()
+    // Use py_call which is safer for bound methods
+    bool ok = py_call(py_retval(), 0, NULL);
 
     if (!ok) {
         py_printexc();
@@ -401,61 +477,57 @@ t_max_err pyext_call_method_noargs(t_pyext* x, const char* method_name)
 t_max_err pyext_call_method(t_pyext* x, const char* method_name,
                            long argc, t_atom* argv)
 {
-    if (x->py_instance == NULL) {
+    if (x->py_instance_name[0] == '\0') {
         object_error((t_object*)x, "no Python instance");
         return MAX_ERR_GENERIC;
     }
 
-    // Look up method from the class (not instance) to get unbound function
-    py_GlobalRef py_class = py_getglobal(py_name("External"));
-    if (py_class == NULL) {
-        object_error((t_object*)x, "External class not found");
+    // Get the instance from globals
+    py_GlobalRef instance = py_getglobal(py_name(x->py_instance_name));
+    if (instance == NULL) {
+        object_error((t_object*)x, "instance not found in globals");
         return MAX_ERR_GENERIC;
     }
 
-    bool has_method = py_getattr(py_class, py_name(method_name));
-    if (!has_method) {
+    // Try to get the method attribute
+    if (!py_getattr(instance, py_name(method_name))) {
         // Method doesn't exist - not an error, just silently return
         return MAX_ERR_NONE;
     }
 
-    py_GlobalRef method = py_retval();
+    // Save the method immediately
+    py_Ref method_ref = py_getreg(10);
+    py_assign(method_ref, py_retval());
 
-    if (!py_callable(method)) {
-        // Not callable - not an error
-        return MAX_ERR_NONE;
+    // Build argument array in consecutive registers
+    // Start at register 11 to avoid conflicts
+    if (argc > 16) {
+        object_error((t_object*)x, "too many arguments (max 16)");
+        return MAX_ERR_GENERIC;
     }
 
-    // Setup call - push unbound method and instance as first argument
-    py_push(method);
-    py_push(x->py_instance);  // Pass instance explicitly
-
-    // Convert arguments
     for (long i = 0; i < argc; i++) {
-        py_Ref r0 = py_getreg(0);
+        py_Ref arg_reg = py_getreg(11 + i);
         switch (atom_gettype(argv + i)) {
             case A_LONG:
-                py_newint(r0, atom_getlong(argv + i));
-                py_push(r0);
+                py_newint(arg_reg, atom_getlong(argv + i));
                 break;
             case A_FLOAT:
-                py_newfloat(r0, atom_getfloat(argv + i));
-                py_push(r0);
+                py_newfloat(arg_reg, atom_getfloat(argv + i));
                 break;
             case A_SYM:
-                py_newstr(r0, atom_getsym(argv + i)->s_name);
-                py_push(r0);
+                py_newstr(arg_reg, atom_getsym(argv + i)->s_name);
                 break;
             default:
                 object_warn((t_object*)x, "unsupported atom type");
-                py_newnone(r0);
-                py_push(r0);
+                py_newnone(arg_reg);
                 break;
         }
     }
 
-    // Call the method
-    bool ok = py_vectorcall(argc, 0);
+    // Call using py_call - pass pointer to first argument register
+    py_Ref first_arg = argc > 0 ? py_getreg(11) : NULL;
+    bool ok = py_call(method_ref, (int)argc, first_arg);
 
     if (!ok) {
         py_printexc();
