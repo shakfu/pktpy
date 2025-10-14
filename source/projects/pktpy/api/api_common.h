@@ -38,6 +38,11 @@ extern py_Type g_linklist_type;
 extern py_Type g_buffer_type;
 extern py_Type g_clock_type;
 extern py_Type g_outlet_type;
+extern py_Type g_inlet_type;
 extern py_Type g_patchline_type;
+extern py_Type g_table_type;
+extern py_Type g_path_type;
+extern py_Type g_database_type;
+extern py_Type g_dbresult_type;
 
 #endif // API_COMMON_H

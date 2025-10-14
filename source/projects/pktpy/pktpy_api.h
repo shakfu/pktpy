@@ -46,6 +46,10 @@
 #include "api/api_clock.h"
 #include "api/api_buffer.h"
 #include "api/api_outlet.h"
+#include "api/api_inlet.h"
+#include "api/api_table.h"
+#include "api/api_path.h"
+#include "api/api_database.h"
 
 // ----------------------------------------------------------------------------
 // custom pktpy2 functions
@@ -216,6 +220,11 @@ py_Type g_linklist_type = -1;
 py_Type g_buffer_type = -1;
 py_Type g_clock_type = -1;
 py_Type g_outlet_type = -1;
+py_Type g_inlet_type = -1;
+py_Type g_table_type = -1;
+py_Type g_path_type = -1;
+py_Type g_database_type = -1;
+py_Type g_dbresult_type = -1;
 
 // Forward declarations for utility functions
 static bool py_to_atom(py_Ref py_val, t_atom* atom);
@@ -875,6 +884,26 @@ bool api_module_initialize(void) {
     py_bindmethod(g_outlet_type, "anything", Outlet_anything);
     py_bindmethod(g_outlet_type, "pointer", Outlet_pointer);
 
+    // Inlet type
+    g_inlet_type = py_newtype("Inlet", tp_object, mod, (py_Dtor)Inlet__del__);
+    py_bindmethod(g_inlet_type, "__new__", Inlet__new__);
+    py_bindmethod(g_inlet_type, "__init__", Inlet__init__);
+    py_bindmethod(g_inlet_type, "__repr__", Inlet__repr__);
+    py_bindmethod(g_inlet_type, "delete", Inlet_delete);
+    py_bindmethod(g_inlet_type, "pointer", Inlet_pointer);
+    py_bindmethod(g_inlet_type, "get_num", Inlet_get_num);
+    py_bindmethod(g_inlet_type, "is_proxy", Inlet_is_proxy);
+    py_bindmethod(g_inlet_type, "is_null", Inlet_is_null);
+
+    // Inlet module-level functions
+    py_bindfunc(mod, "inlet_new", api_inlet_new);
+    py_bindfunc(mod, "intin", api_intin);
+    py_bindfunc(mod, "floatin", api_floatin);
+    py_bindfunc(mod, "proxy_new", api_proxy_new);
+    py_bindfunc(mod, "proxy_getinlet", api_proxy_getinlet);
+    py_bindfunc(mod, "inlet_count", api_inlet_count);
+    py_bindfunc(mod, "inlet_nth", api_inlet_nth);
+
     // Buffer type
     g_buffer_type = py_newtype("Buffer", tp_object, mod, (py_Dtor)Buffer__del__);
     py_bindmethod(g_buffer_type, "__new__", Buffer__new__);
@@ -1055,6 +1084,127 @@ bool api_module_initialize(void) {
     py_bindmethod(g_linklist_type, "shuffle", Linklist_shuffle);
     py_bindmethod(g_linklist_type, "swap", Linklist_swap);
     py_bindmethod(g_linklist_type, "pointer", Linklist_pointer);
+
+    // Table type
+    g_table_type = py_newtype("Table", tp_object, mod, (py_Dtor)Table__del__);
+    py_bindmethod(g_table_type, "__new__", Table__new__);
+    py_bindmethod(g_table_type, "__init__", Table__init__);
+    py_bindmethod(g_table_type, "__repr__", Table__repr__);
+    py_bindmethod(g_table_type, "__len__", Table__len__);
+    py_bindmethod(g_table_type, "__getitem__", Table__getitem__);
+    py_bindmethod(g_table_type, "__setitem__", Table__setitem__);
+    py_bindmethod(g_table_type, "bind", Table_bind);
+    py_bindmethod(g_table_type, "refresh", Table_refresh);
+    py_bindmethod(g_table_type, "get", Table_get);
+    py_bindmethod(g_table_type, "set", Table_set);
+    py_bindmethod(g_table_type, "size", Table_size);
+    py_bindmethod(g_table_type, "is_bound", Table_is_bound);
+    py_bindmethod(g_table_type, "name", Table_name);
+    py_bindmethod(g_table_type, "to_list", Table_to_list);
+    py_bindmethod(g_table_type, "from_list", Table_from_list);
+    py_bindmethod(g_table_type, "fill", Table_fill);
+    py_bindmethod(g_table_type, "copy_from", Table_copy_from);
+    py_bindmethod(g_table_type, "pointer", Table_pointer);
+
+    // Path type
+    g_path_type = py_newtype("Path", tp_object, mod, (py_Dtor)Path__del__);
+    py_bindmethod(g_path_type, "__new__", Path__new__);
+    py_bindmethod(g_path_type, "__init__", Path__init__);
+    py_bindmethod(g_path_type, "__repr__", Path__repr__);
+    py_bindmethod(g_path_type, "set_from_id", Path_set_from_id);
+    py_bindmethod(g_path_type, "get_id", Path_get_id);
+    py_bindmethod(g_path_type, "get_path", Path_get_path);
+    py_bindmethod(g_path_type, "is_set", Path_is_set);
+
+    // Path/file module-level functions
+    py_bindfunc(mod, "path_getdefault", api_path_getdefault);
+    py_bindfunc(mod, "path_setdefault", api_path_setdefault);
+    py_bindfunc(mod, "path_getapppath", api_path_getapppath);
+    py_bindfunc(mod, "locatefile_extended", api_locatefile_extended);
+    py_bindfunc(mod, "path_toabsolutesystempath", api_path_toabsolutesystempath);
+    py_bindfunc(mod, "path_nameconform", api_path_nameconform);
+    py_bindfunc(mod, "path_opensysfile", api_path_opensysfile);
+    py_bindfunc(mod, "path_createsysfile", api_path_createsysfile);
+    py_bindfunc(mod, "path_closesysfile", api_path_closesysfile);
+    py_bindfunc(mod, "sysfile_read", api_sysfile_read);
+    py_bindfunc(mod, "sysfile_write", api_sysfile_write);
+    py_bindfunc(mod, "sysfile_geteof", api_sysfile_geteof);
+    py_bindfunc(mod, "sysfile_seteof", api_sysfile_seteof);
+    py_bindfunc(mod, "sysfile_getpos", api_sysfile_getpos);
+    py_bindfunc(mod, "sysfile_setpos", api_sysfile_setpos);
+    py_bindfunc(mod, "sysfile_readtextfile", api_sysfile_readtextfile);
+    py_bindfunc(mod, "path_deletefile", api_path_deletefile);
+
+    // Path constants
+    py_Ref r0 = py_getreg(0);
+
+    // Path styles
+    py_newint(r0, PATH_STYLE_MAX);
+    py_setglobal(py_name("PATH_STYLE_MAX"), r0);
+    py_newint(r0, PATH_STYLE_NATIVE);
+    py_setglobal(py_name("PATH_STYLE_NATIVE"), r0);
+    py_newint(r0, PATH_STYLE_SLASH);
+    py_setglobal(py_name("PATH_STYLE_SLASH"), r0);
+
+    // Path types
+    py_newint(r0, PATH_TYPE_ABSOLUTE);
+    py_setglobal(py_name("PATH_TYPE_ABSOLUTE"), r0);
+    py_newint(r0, PATH_TYPE_RELATIVE);
+    py_setglobal(py_name("PATH_TYPE_RELATIVE"), r0);
+    py_newint(r0, PATH_TYPE_BOOT);
+    py_setglobal(py_name("PATH_TYPE_BOOT"), r0);
+    py_newint(r0, PATH_TYPE_PATH);
+    py_setglobal(py_name("PATH_TYPE_PATH"), r0);
+
+    // File permissions
+    py_newint(r0, PATH_READ_PERM);
+    py_setglobal(py_name("PATH_READ_PERM"), r0);
+    py_newint(r0, PATH_WRITE_PERM);
+    py_setglobal(py_name("PATH_WRITE_PERM"), r0);
+    py_newint(r0, PATH_RW_PERM);
+    py_setglobal(py_name("PATH_RW_PERM"), r0);
+
+    // File position modes
+    py_newint(r0, SYSFILE_ATMARK);
+    py_setglobal(py_name("SYSFILE_ATMARK"), r0);
+    py_newint(r0, SYSFILE_FROMSTART);
+    py_setglobal(py_name("SYSFILE_FROMSTART"), r0);
+    py_newint(r0, SYSFILE_FROMLEOF);
+    py_setglobal(py_name("SYSFILE_FROMLEOF"), r0);
+
+    // Database type
+    g_database_type = py_newtype("Database", tp_object, mod, (py_Dtor)Database__del__);
+    py_bindmethod(g_database_type, "__new__", Database__new__);
+    py_bindmethod(g_database_type, "__init__", Database__init__);
+    py_bindmethod(g_database_type, "__repr__", Database__repr__);
+    py_bindmethod(g_database_type, "open", Database_open);
+    py_bindmethod(g_database_type, "close", Database_close);
+    py_bindmethod(g_database_type, "query", Database_query);
+    py_bindmethod(g_database_type, "transaction_start", Database_transaction_start);
+    py_bindmethod(g_database_type, "transaction_end", Database_transaction_end);
+    py_bindmethod(g_database_type, "transaction_flush", Database_transaction_flush);
+    py_bindmethod(g_database_type, "get_last_insert_id", Database_get_last_insert_id);
+    py_bindmethod(g_database_type, "create_table", Database_create_table);
+    py_bindmethod(g_database_type, "add_column", Database_add_column);
+    py_bindmethod(g_database_type, "is_open", Database_is_open);
+    py_bindmethod(g_database_type, "pointer", Database_pointer);
+
+    // DBResult type
+    g_dbresult_type = py_newtype("DBResult", tp_object, mod, (py_Dtor)DBResult__del__);
+    py_bindmethod(g_dbresult_type, "__new__", DBResult__new__);
+    py_bindmethod(g_dbresult_type, "__init__", DBResult__init__);
+    py_bindmethod(g_dbresult_type, "__repr__", DBResult__repr__);
+    py_bindmethod(g_dbresult_type, "__len__", DBResult__len__);
+    py_bindmethod(g_dbresult_type, "numrecords", DBResult_numrecords);
+    py_bindmethod(g_dbresult_type, "numfields", DBResult_numfields);
+    py_bindmethod(g_dbresult_type, "fieldname", DBResult_fieldname);
+    py_bindmethod(g_dbresult_type, "get_string", DBResult_get_string);
+    py_bindmethod(g_dbresult_type, "get_long", DBResult_get_long);
+    py_bindmethod(g_dbresult_type, "get_float", DBResult_get_float);
+    py_bindmethod(g_dbresult_type, "get_record", DBResult_get_record);
+    py_bindmethod(g_dbresult_type, "to_list", DBResult_to_list);
+    py_bindmethod(g_dbresult_type, "reset", DBResult_reset);
+    py_bindmethod(g_dbresult_type, "clear", DBResult_clear);
 
     // Person type (demo code)
     py_Type person_type = py_newtype("Person", tp_object, mod, NULL);
