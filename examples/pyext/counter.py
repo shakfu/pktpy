@@ -21,13 +21,16 @@ class External:
         """Increment counter and output"""
         self.count += 1
         api.post(f"Count: {self.count}")
+        self._outlets[0].int(self.count)
 
     def reset(self):
         """Reset counter to zero"""
         self.count = 0
         api.post("Counter reset")
+        self._outlets[0].int(0)
 
     def set(self, n):
         """Set counter to specific value"""
         self.count = n
         api.post(f"Counter set to {self.count}")
+        self._outlets[0].int(n)

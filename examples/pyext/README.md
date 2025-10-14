@@ -30,6 +30,9 @@ In the `__init__` method, set:
 - `self.inlets` - number of inlets (default: 1)
 - `self.outlets` - number of outlets (default: 1)
 
+After initialization, your Python object has access to:
+- `self._outlets` - list of outlet objects for sending data to Max
+
 ## Message Handlers
 
 Define methods to handle Max messages:
@@ -38,6 +41,30 @@ Define methods to handle Max messages:
 - `float(f)` - responds to float messages
 - `list(*args)` - responds to list messages
 - Custom methods - any other method name becomes a Max message
+
+## Sending Output
+
+Use the `self._outlets` list to send data:
+
+```python
+def bang(self):
+    # Send integer to outlet 0
+    self._outlets[0].int(42)
+
+    # Send float to outlet 1 (if it exists)
+    if len(self._outlets) > 1:
+        self._outlets[1].float(3.14)
+
+    # Send bang
+    self._outlets[0].bang()
+```
+
+Available outlet methods:
+- `.bang()` - Send bang
+- `.int(n)` - Send integer
+- `.float(f)` - Send float
+- `.list(atomarray)` - Send list (requires AtomArray)
+- `.anything(symbol, atomarray)` - Send message
 
 ## Using in Max
 

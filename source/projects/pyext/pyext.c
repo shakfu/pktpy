@@ -118,6 +118,11 @@ void* pyext_new(t_symbol* s, long argc, t_atom* argv)
 
         // Setup inlets and outlets based on Python object configuration
         pyext_setup_inlets_outlets(x);
+
+        // Inject outlet wrappers into Python instance
+        if (x->py_instance != NULL) {
+            pyext_inject_outlets(x);
+        }
     }
 
     return (x);
@@ -255,6 +260,9 @@ t_max_err pyext_load_script(t_pyext* x, t_symbol* script_name)
     object_post((t_object*)x, "inlets: %ld, outlets: %ld",
                x->num_inlets, x->num_outlets);
 
+    // Note: Outlets will be created in pyext_setup_inlets_outlets() after this returns
+    // We'll inject outlet wrappers after that in pyext_new()
+
     return MAX_ERR_NONE;
 
 error:
@@ -295,6 +303,37 @@ t_max_err pyext_setup_inlets_outlets(t_pyext* x)
     for (long i = x->num_inlets - 1; i >= 1; i--) {
         x->inlets[i] = proxy_new((t_object*)x, i, &x->inlet_num);
     }
+
+    return MAX_ERR_NONE;
+}
+
+// ----------------------------------------------------------------------------
+// pyext_inject_outlets - inject outlet wrapper objects into Python instance
+
+t_max_err pyext_inject_outlets(t_pyext* x)
+{
+    if (x->py_instance == NULL) {
+        return MAX_ERR_GENERIC;
+    }
+
+    // Create a list of Outlet wrapper objects
+    py_Ref outlets_list = py_getreg(0);
+    py_newlistn(outlets_list, x->num_outlets);
+
+    // Populate the list with Outlet objects
+    for (long i = 0; i < x->num_outlets; i++) {
+        py_Ref outlet_item = py_list_getitem(outlets_list, i);
+
+        // Create Outlet wrapper object
+        OutletObject* outlet_obj = py_newobject(outlet_item, g_outlet_type, 0, sizeof(OutletObject));
+        outlet_obj->outlet = x->outlets[i];
+        outlet_obj->owns_outlet = false;  // Don't free - owned by Max object
+    }
+
+    // Set the outlets_list attribute on the Python instance
+    py_setattr(x->py_instance, py_name("_outlets"), outlets_list);
+
+    object_post((t_object*)x, "injected %ld outlet(s) into Python instance", x->num_outlets);
 
     return MAX_ERR_NONE;
 }

@@ -24,15 +24,19 @@ class External:
     def bang(self):
         """Respond to bang message - output stored value"""
         api.post(f"Bang received! Value is {self.value}")
+        self._outlets[0].int(self.value)
 
     def int(self, n):
-        """Respond to int message - store the value"""
+        """Respond to int message - store and output the value"""
         self.value = n
         api.post(f"Stored value: {self.value}")
+        self._outlets[0].int(n)
 
     def float(self, f):
-        """Respond to float message"""
+        """Respond to float message - output to second outlet"""
         api.post(f"Received float: {f}")
+        if len(self._outlets) > 1:
+            self._outlets[1].float(f)
 
     def set_value(self, n):
         """Custom message handler - set value without output"""

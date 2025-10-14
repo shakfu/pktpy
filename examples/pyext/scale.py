@@ -23,11 +23,13 @@ class External:
         """Scale integer input"""
         result = n * self.scale_factor
         api.post(f"Scaled {n} by {self.scale_factor} = {result}")
+        self._outlets[0].float(result)
 
     def float(self, f):
         """Scale float input"""
         result = f * self.scale_factor
         api.post(f"Scaled {f} by {self.scale_factor} = {result}")
+        self._outlets[0].float(result)
 
     def set_scale(self, factor):
         """Set the scale factor"""
