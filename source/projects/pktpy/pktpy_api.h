@@ -51,6 +51,8 @@
 #include "api/api_path.h"
 #include "api/api_database.h"
 #include "api/api_external.h"
+#include "api/api_qelem.h"
+#include "api/api_systhread.h"
 
 // ----------------------------------------------------------------------------
 // custom pktpy2 functions
@@ -227,6 +229,9 @@ py_Type g_path_type = -1;
 py_Type g_database_type = -1;
 py_Type g_dbresult_type = -1;
 py_Type g_pyexternal_type = -1;
+py_Type g_qelem_type = -1;
+py_Type g_systhread_type = -1;
+py_Type g_sysmutex_type = -1;
 
 // Forward declarations for utility functions
 static bool py_to_atom(py_Ref py_val, t_atom* atom);
@@ -1225,6 +1230,40 @@ bool api_module_initialize(void) {
     py_bindmethod(g_pyexternal_type, "post", External_post);
     py_bindmethod(g_pyexternal_type, "bang_left", External_bang_left);
     py_bindmethod(g_pyexternal_type, "out", External_out);
+
+    // Qelem type - queue-based defer
+    g_qelem_type = py_newtype("Qelem", tp_object, mod, (py_Dtor)Qelem__del__);
+    py_bindmethod(g_qelem_type, "__new__", Qelem__new__);
+    py_bindmethod(g_qelem_type, "__init__", Qelem__init__);
+    py_bindmethod(g_qelem_type, "__repr__", Qelem__repr__);
+    py_bindmethod(g_qelem_type, "set", Qelem_set);
+    py_bindmethod(g_qelem_type, "unset", Qelem_unset);
+    py_bindmethod(g_qelem_type, "is_set", Qelem_is_set);
+    py_bindmethod(g_qelem_type, "is_null", Qelem_is_null);
+    py_bindmethod(g_qelem_type, "pointer", Qelem_pointer);
+    py_bindmethod(g_qelem_type, "front", Qelem_front);
+
+    // SysThread type - thread management
+    g_systhread_type = py_newtype("SysThread", tp_object, mod, (py_Dtor)SysThread__del__);
+    py_bindmethod(g_systhread_type, "__new__", SysThread__new__);
+    py_bindmethod(g_systhread_type, "__init__", SysThread__init__);
+    py_bindmethod(g_systhread_type, "__repr__", SysThread__repr__);
+    py_bindmethod(g_systhread_type, "start", SysThread_start);
+    py_bindmethod(g_systhread_type, "join", SysThread_join);
+    py_bindmethod(g_systhread_type, "is_running", SysThread_is_running);
+    py_bindmethod(g_systhread_type, "get_result", SysThread_get_result);
+    py_bindmethod(g_systhread_type, "sleep", SysThread_sleep);
+
+    // SysMutex type - mutex/lock management
+    g_sysmutex_type = py_newtype("SysMutex", tp_object, mod, (py_Dtor)SysMutex__del__);
+    py_bindmethod(g_sysmutex_type, "__new__", SysMutex__new__);
+    py_bindmethod(g_sysmutex_type, "__init__", SysMutex__init__);
+    py_bindmethod(g_sysmutex_type, "__repr__", SysMutex__repr__);
+    py_bindmethod(g_sysmutex_type, "lock", SysMutex_lock);
+    py_bindmethod(g_sysmutex_type, "unlock", SysMutex_unlock);
+    py_bindmethod(g_sysmutex_type, "trylock", SysMutex_trylock);
+    py_bindmethod(g_sysmutex_type, "is_locked", SysMutex_is_locked);
+    py_bindmethod(g_sysmutex_type, "pointer", SysMutex_pointer);
 
     // Person type (demo code)
     py_Type person_type = py_newtype("Person", tp_object, mod, NULL);

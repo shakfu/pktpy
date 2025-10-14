@@ -5,7 +5,7 @@ PYDIR := $(PROJECTS)/py
 PKG_NAME = pktpy
 MAX_VERSIONS := 8 9
 
-.phony: all build clean setup update-submodules link
+.phony: all build clean setup update-submodules link snap
 
 all: build
 
@@ -43,3 +43,7 @@ link:
 			fi \
 		fi \
 	done
+
+snap:
+	@git add --all . && git commit -m 'snap' && git push
+
