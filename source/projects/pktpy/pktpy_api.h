@@ -53,6 +53,9 @@
 #include "api/api_external.h"
 #include "api/api_qelem.h"
 #include "api/api_systhread.h"
+#include "api/api_preset.h"
+#include "api/api_time.h"
+#include "api/api_message.h"
 
 // ----------------------------------------------------------------------------
 // custom pktpy2 functions
@@ -232,6 +235,7 @@ py_Type g_pyexternal_type = -1;
 py_Type g_qelem_type = -1;
 py_Type g_systhread_type = -1;
 py_Type g_sysmutex_type = -1;
+py_Type g_itm_type = -1;
 
 // Forward declarations for utility functions
 static bool py_to_atom(py_Ref py_val, t_atom* atom);
@@ -1264,6 +1268,51 @@ bool api_module_initialize(void) {
     py_bindmethod(g_sysmutex_type, "trylock", SysMutex_trylock);
     py_bindmethod(g_sysmutex_type, "is_locked", SysMutex_is_locked);
     py_bindmethod(g_sysmutex_type, "pointer", SysMutex_pointer);
+
+    // ITM (Time) type
+    g_itm_type = py_newtype("ITM", tp_object, mod, (py_Dtor)ITM__del__);
+    py_bindmethod(g_itm_type, "__new__", ITM__new__);
+    py_bindmethod(g_itm_type, "__init__", ITM__init__);
+    py_bindmethod(g_itm_type, "__repr__", ITM__repr__);
+    py_bindmethod(g_itm_type, "getticks", ITM_getticks);
+    py_bindmethod(g_itm_type, "gettime", ITM_gettime);
+    py_bindmethod(g_itm_type, "getstate", ITM_getstate);
+    py_bindmethod(g_itm_type, "tickstoms", ITM_tickstoms);
+    py_bindmethod(g_itm_type, "mstoticks", ITM_mstoticks);
+    py_bindmethod(g_itm_type, "mstosamps", ITM_mstosamps);
+    py_bindmethod(g_itm_type, "sampstoms", ITM_sampstoms);
+    py_bindmethod(g_itm_type, "bbutoticsk", ITM_bbutoticsk);
+    py_bindmethod(g_itm_type, "tickstobbu", ITM_tickstobbu);
+    py_bindmethod(g_itm_type, "pause", ITM_pause);
+    py_bindmethod(g_itm_type, "resume", ITM_resume);
+    py_bindmethod(g_itm_type, "seek", ITM_seek);
+    py_bindmethod(g_itm_type, "settimesignature", ITM_settimesignature);
+    py_bindmethod(g_itm_type, "gettimesignature", ITM_gettimesignature);
+    py_bindmethod(g_itm_type, "dump", ITM_dump);
+    py_bindmethod(g_itm_type, "sync", ITM_sync);
+    py_bindmethod(g_itm_type, "pointer", ITM_pointer);
+    py_bindmethod(g_itm_type, "is_valid", ITM_is_valid);
+
+    // ITM module-level functions
+    py_bindfunc(mod, "itm_getglobal", itm_getglobal_func);
+    py_bindfunc(mod, "itm_setresolution", itm_setresolution_func);
+    py_bindfunc(mod, "itm_getresolution", itm_getresolution_func);
+
+    // Preset module-level functions
+    py_bindfunc(mod, "preset_store", preset_store_func);
+    py_bindfunc(mod, "preset_set", preset_set_func);
+    py_bindfunc(mod, "preset_int", preset_int_func);
+    py_bindfunc(mod, "preset_get_data_symbol", preset_get_data_symbol);
+
+    // Message sending module-level functions
+    py_bindfunc(mod, "typedmess", typedmess_func);
+    py_bindfunc(mod, "send_message", send_message_func);
+    py_bindfunc(mod, "send_bang", send_bang_func);
+    py_bindfunc(mod, "send_int", send_int_func);
+    py_bindfunc(mod, "send_float", send_float_func);
+    py_bindfunc(mod, "send_symbol", send_symbol_func);
+    py_bindfunc(mod, "send_list", send_list_func);
+    py_bindfunc(mod, "send_anything", send_anything_func);
 
     // Person type (demo code)
     py_Type person_type = py_newtype("Person", tp_object, mod, NULL);

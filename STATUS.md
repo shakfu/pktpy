@@ -44,32 +44,26 @@ Already partially used but not exposed:
 - path_nameconform(), locatefile_extended()
 - Essential for file I/O in Python
 
-6. [ ] Preset/Pattr (ext_preset.h, ext_pattr.h)
-
-State management integration:
-- pattr_register(), pattr_unregister()
-- Exposes Python state to Max's preset system
-
-7. [x] Database (ext_database.h)
+6. [x] Database (ext_database.h)
 
 SQLite access:
 - db_open(), db_query(), db_result_*
 - Direct database operations from Python
 
-8. [ ] Wind (ext_wind.h)
+7. [x] Preset/Pattr (ext_preset.h, ext_pattr.h)
 
-Advanced window management:
-- wind_advise() for window events
-- Complements existing Patcher API
+State management integration:
+- pattr_register(), pattr_unregister()
+- Exposes Python state to Max's preset system
 
-9. [ ] Time (ext_itm.h)
+8. [x] Time (ext_itm.h)
 
 Transport/timing beyond Clock:
 - itm_parse() - Parse time strings
 - itm_format() - Format time values
 - time_* functions for tempo-aware scheduling
 
-10. [ ] Message Sending
+9. [x] Message Sending
 
 Currently missing direct message dispatch:
 - typedmess() - Send arbitrary messages to objects
@@ -91,7 +85,6 @@ Nice to have:
 7. Table - Lighter data arrays
 8. Preset/Pattr - State management
 9. Database - SQLite integration
-10. Wind - Advanced window control
 
 The most glaring omission is Inlet - asymmetric to have outlets without
 inlets. Path/File would also significantly enhance Python's file I/O

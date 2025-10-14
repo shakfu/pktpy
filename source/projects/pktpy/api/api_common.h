@@ -48,5 +48,6 @@ extern py_Type g_pyexternal_type;
 extern py_Type g_qelem_type;
 extern py_Type g_systhread_type;
 extern py_Type g_sysmutex_type;
+extern py_Type g_itm_type;
 
 #endif // API_COMMON_H
