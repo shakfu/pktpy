@@ -6,6 +6,7 @@ This demonstrates the basic structure of a Python external for Max.
 
 import api
 
+
 class External:
     """
     A simple external that responds to bang and stores a value.

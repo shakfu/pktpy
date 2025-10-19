@@ -805,6 +805,29 @@ static bool api_atom_gettext(int argc, py_Ref argv) {
 }
 
 // ----------------------------------------------------------------------------
+// @external decorator for pyext
+// Registers the decorated class as an external in the global registry
+
+static bool external_decorator(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+
+    py_Ref cls = py_arg(0);
+
+    // Set __is_external__ = True on the class
+    py_Ref r0 = py_getreg(0);
+    py_newbool(r0, true);
+    py_setattr(cls, py_name("__is_external__"), r0);
+
+    // Register this class as the external class in a well-known global variable
+    // We use __pyext_external_class__ as the registry name
+    py_setglobal(py_name("__pyext_external_class__"), cls);
+
+    // Return the class unchanged
+    py_assign(py_retval(), cls);
+    return true;
+}
+
+// ----------------------------------------------------------------------------
 // initialize
 
 bool api_module_initialize(void) {
@@ -1320,6 +1343,9 @@ bool api_module_initialize(void) {
     py_bindmethod(person_type, "__init__", Person__init__);
     py_bindproperty(person_type, "id", Person__id, Person__set_id);
     py_bindproperty(person_type, "age", Person__age, Person__set_age);
+
+    // @external decorator (reserved for future use)
+    py_bindfunc(mod, "external", external_decorator);
 
     return true;
 }

@@ -231,6 +231,35 @@ void pyext_free(t_pyext* x)
 }
 
 // ----------------------------------------------------------------------------
+// pyext_find_external_class - find class marked as external
+//
+// Searches for external class in this priority order:
+// 1. Check global registry __pyext_external_class__ (set by @api.external decorator)
+// 2. Class named "External" (backward compatibility)
+//
+// Returns: py_GlobalRef to the class, or NULL if not found
+
+py_GlobalRef pyext_find_external_class(t_pyext* x)
+{
+    // First priority: Check if a class was registered via @api.external decorator
+    py_GlobalRef registered_class = py_getglobal(py_name("__pyext_external_class__"));
+    if (registered_class != NULL) {
+        object_post((t_object*)x, "found registered external class via @api.external");
+        return registered_class;
+    }
+
+    // Second priority: Try to find class named "External" (backward compatibility)
+    py_GlobalRef external_class = py_getglobal(py_name("External"));
+    if (external_class != NULL) {
+        object_post((t_object*)x, "found External class (legacy)");
+        return external_class;
+    }
+
+    // No external class found
+    return NULL;
+}
+
+// ----------------------------------------------------------------------------
 // pyext_load_script - load and instantiate Python script
 
 t_max_err pyext_load_script(t_pyext* x, t_symbol* script_name)
@@ -291,11 +320,13 @@ t_max_err pyext_load_script(t_pyext* x, t_symbol* script_name)
         goto error;
     }
 
-    // Look for a class called 'External' or first class defined
-    // For now, try 'External' class
-    py_GlobalRef external_class = py_getglobal(py_name("External"));
+    // Find the external class using flexible detection
+    py_GlobalRef external_class = pyext_find_external_class(x);
     if (external_class == NULL) {
-        object_error((t_object*)x, "script must define 'External' class");
+        object_error((t_object*)x,
+                   "script must define an external class:\n"
+                   "  1. Use @api.external decorator on any class, OR\n"
+                   "  2. Name your class 'External' (legacy)");
         goto error;
     }
 

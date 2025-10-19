@@ -15,7 +15,7 @@ class External:
         self.inlets = 1
         self.outlets = 1
         self.count = 0
-        api.post("counter.py: Counter initialized")
+        api.post("counter.py: Counter External initialized")
 
     def bang(self):
         """Increment counter and output"""

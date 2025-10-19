@@ -6,7 +6,8 @@ This demonstrates the basic structure of a Python external for Max.
 
 import api
 
-class External:
+@api.external
+class Simple:
     """
     A simple external that responds to bang and stores a value.
     """
@@ -19,7 +20,7 @@ class External:
         # Instance variables
         self.value = 0
 
-        api.post("simple.py: External initialized")
+        api.post("simple.py: Simple initialized")
 
     def bang(self):
         """Respond to bang message - output stored value"""
