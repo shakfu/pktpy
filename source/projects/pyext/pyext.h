@@ -82,6 +82,7 @@ void pyext_doread(t_pyext* x, t_symbol* s, long argc, t_atom* argv);
 // script management
 t_max_err pyext_load_script(t_pyext* x, t_symbol* script_name);
 t_max_err pyext_reload(t_pyext* x);
+t_max_err pyext_load(t_pyext* x, t_symbol* s);
 t_max_err pyext_inject_outlets(t_pyext* x);
 
 // Python method routing

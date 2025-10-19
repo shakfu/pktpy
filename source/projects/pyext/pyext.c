@@ -106,6 +106,7 @@ void ext_main(void* r)
 
     // Script management
     class_addmethod(c, (method)pyext_reload,   "reload",   0);
+    class_addmethod(c, (method)pyext_load,     "load",     A_DEFSYM, 0);
 
     class_register(CLASS_BOX, c);
     pyext_class = c;
@@ -402,6 +403,59 @@ t_max_err pyext_reload(t_pyext* x)
     pyext_inject_outlets(x);
 
     object_post((t_object*)x, "script reloaded successfully");
+    return MAX_ERR_NONE;
+}
+
+// ----------------------------------------------------------------------------
+// pyext_load - load a new Python script
+
+t_max_err pyext_load(t_pyext* x, t_symbol* s)
+{
+    if (s == gensym("") || s == NULL) {
+        object_error((t_object*)x, "load requires a filename argument");
+        return MAX_ERR_GENERIC;
+    }
+
+    object_post((t_object*)x, "loading script: %s", s->s_name);
+
+    // Clear current instance from globals
+    if (x->py_instance_name[0] != '\0') {
+        py_Ref r0 = py_getreg(0);
+        py_newnone(r0);
+        py_setglobal(py_name(x->py_instance_name), r0);
+    }
+
+    // Clean up old inlets/outlets before recreating them
+    // Free inlet proxies (skip first inlet which is the main inlet)
+    for (int i = 1; i < x->num_inlets; i++) {
+        if (x->inlets[i] != NULL) {
+            object_free(x->inlets[i]);
+            x->inlets[i] = NULL;
+        }
+    }
+
+    // Free outlets
+    for (int i = 0; i < x->num_outlets; i++) {
+        if (x->outlets[i] != NULL) {
+            outlet_delete(x->outlets[i]);
+            x->outlets[i] = NULL;
+        }
+    }
+
+    // Update script name and load the new script
+    x->script_name = s;
+    t_max_err err = pyext_load_script(x, s);
+    if (err != MAX_ERR_NONE) {
+        return err;
+    }
+
+    // Recreate inlets and outlets with potentially new counts
+    pyext_setup_inlets_outlets(x);
+
+    // Inject outlet wrappers into the new Python instance
+    pyext_inject_outlets(x);
+
+    object_post((t_object*)x, "script loaded successfully");
     return MAX_ERR_NONE;
 }
 
