@@ -372,8 +372,37 @@ t_max_err pyext_reload(t_pyext* x)
         py_setglobal(py_name(x->py_instance_name), r0);
     }
 
-    // Reload the script
-    return pyext_load_script(x, x->script_name);
+    // Clean up old inlets/outlets before recreating them
+    // Free inlet proxies (skip first inlet which is the main inlet)
+    for (int i = 1; i < x->num_inlets; i++) {
+        if (x->inlets[i] != NULL) {
+            object_free(x->inlets[i]);
+            x->inlets[i] = NULL;
+        }
+    }
+
+    // Free outlets
+    for (int i = 0; i < x->num_outlets; i++) {
+        if (x->outlets[i] != NULL) {
+            outlet_delete(x->outlets[i]);
+            x->outlets[i] = NULL;
+        }
+    }
+
+    // Reload the script - this will update num_inlets and num_outlets
+    t_max_err err = pyext_load_script(x, x->script_name);
+    if (err != MAX_ERR_NONE) {
+        return err;
+    }
+
+    // Recreate inlets and outlets with potentially new counts
+    pyext_setup_inlets_outlets(x);
+
+    // Inject outlet wrappers into the new Python instance
+    pyext_inject_outlets(x);
+
+    object_post((t_object*)x, "script reloaded successfully");
+    return MAX_ERR_NONE;
 }
 
 // ----------------------------------------------------------------------------
