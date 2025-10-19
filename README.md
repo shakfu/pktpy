@@ -1,4 +1,4 @@
-# pktpy -- pocketpy Max/MSP external
+# pktpy -- pocketpy externals for Max/MSP
 
 A lightweight Python 3.x interpreter for Max/MSP, built with [pocketpy](https://github.com/pocketpy/pocketpy) v2.0.8.
 
