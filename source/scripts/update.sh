@@ -2,7 +2,7 @@ BRANCH=v2.1.3
 
 function get_pocketpy() {
   cd source/thirdparty && \
-  git clone -b ${BRANCH} --depth=1 https://github.com/pocketpy/pocketpy.git && \
+  git clone -b ${BRANCH} --depth=1 --recursive https://github.com/pocketpy/pocketpy.git && \
   rm -rf pocketpy/.git
 }
 
