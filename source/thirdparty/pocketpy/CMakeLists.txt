@@ -61,8 +61,13 @@ else()
     add_definitions(-DPK_ENABLE_THREADS=0)
 endif()
 
+if(PK_ENABLE_DLL)
+    add_definitions(-DPK_ENABLE_DLL=1)
+else()
+    add_definitions(-DPK_ENABLE_DLL=0)
+endif()
+
 if(PK_ENABLE_DETERMINISM)
-    add_subdirectory(3rd/dmath/dmath)
     add_definitions(-DPK_ENABLE_DETERMINISM=1)
 else()
     add_definitions(-DPK_ENABLE_DETERMINISM=0)
@@ -110,16 +115,20 @@ if(PK_BUILD_MODULE_LZ4)
     add_definitions(-DPK_BUILD_MODULE_LZ4)
 endif()
 
-if(PK_BUILD_MODULE_LIBHV)
-    add_subdirectory(3rd/libhv)
-    add_definitions(-DPK_BUILD_MODULE_LIBHV)
-endif()
-
 if(PK_BUILD_MODULE_CUTE_PNG)
     add_subdirectory(3rd/cute_png)
     add_definitions(-DPK_BUILD_MODULE_CUTE_PNG)
 endif()
 
+if(PK_BUILD_MODULE_MSGPACK)
+    add_subdirectory(3rd/msgpack)
+    add_definitions(-DPK_BUILD_MODULE_MSGPACK)
+endif()
+
+if(PK_BUILD_MODULE_PERIPHERY)
+    add_subdirectory(3rd/periphery)
+    add_definitions(-DPK_BUILD_MODULE_PERIPHERY)
+endif()
 
 if(PK_BUILD_SHARED_LIB)
     message(">> Building shared library")
@@ -145,25 +154,13 @@ target_include_directories(
     ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
-if(PK_ENABLE_DETERMINISM)
-    target_link_libraries(${PROJECT_NAME} dmath)
-    if(MSVC)
-        target_link_options(${PROJECT_NAME} PRIVATE /FORCE:MULTIPLE)
-    endif()
-endif()
-
 if(PK_ENABLE_THREADS)
     find_package(Threads REQUIRED)
     target_link_libraries(${PROJECT_NAME} Threads::Threads)
 endif()
 
 if(UNIX AND NOT APPLE)
-    if(NOT PK_ENABLE_DETERMINISM)
-        # use platform libm
-        target_link_libraries(${PROJECT_NAME} m)
-    endif()
-
-    if(PK_ENABLE_OS)
+    if(PK_ENABLE_OS AND PK_ENABLE_DLL)
         target_link_libraries(${PROJECT_NAME} dl)
     endif()
 elseif(WIN32)
@@ -181,14 +178,18 @@ if(PK_BUILD_MODULE_LZ4)
     target_link_libraries(${PROJECT_NAME} lz4)
 endif()
 
-if(PK_BUILD_MODULE_LIBHV)
-    target_link_libraries(${PROJECT_NAME} libhv_bindings)
-endif()
-
 if(PK_BUILD_MODULE_CUTE_PNG)
     target_link_libraries(${PROJECT_NAME} cute_png)
 endif()
 
+if(PK_BUILD_MODULE_MSGPACK)
+    target_link_libraries(${PROJECT_NAME} msgpack)
+endif()
+
+if(PK_BUILD_MODULE_PERIPHERY)
+    target_link_libraries(${PROJECT_NAME} periphery-ffi)
+endif()
+############################################
 
 if(PK_ENABLE_MIMALLOC)
     target_link_libraries(${PROJECT_NAME} mimalloc-static)

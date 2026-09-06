@@ -22,7 +22,7 @@ The easiest way to test a feature is to [try it on your browser](https://pocketp
 
 1. Descriptor protocol `__get__` and `__set__`. However, `@property` is implemented.
 2. `__slots__` in class definition.
-3. `else` clause in try..except.
+3. `else` and `finally` clause in try..except.
 4. Inplace methods like `__iadd__` and `__imul__`.
 5. `__del__` in class definition.
 6. Multiple inheritance.
@@ -30,7 +30,7 @@ The easiest way to test a feature is to [try it on your browser](https://pocketp
 ## Different behaviors
 
 1. positional and keyword arguments are strictly evaluated.
-2. `int` does not derive from `bool`.
+2. `bool` does not derive from `int`. They are independent types.
 3. `int` is 64-bit.
 4. Raw string cannot have boundary quotes in it, even escaped. See [#55](https://github.com/pocketpy/pocketpy/issues/55).
 5. In a starred unpacked assignment, e.g. `a, b, *c = x`, the starred variable can only be presented in the last position. `a, *b, c = x` is not supported.

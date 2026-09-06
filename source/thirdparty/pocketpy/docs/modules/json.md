@@ -3,11 +3,19 @@ icon: package
 label: json
 ---
 
-### `json.loads(data: str)`
+JSON serialization and deserialization module.
 
-Decode a JSON string into a python object.
+This module is not safe. You may not want to use it with untrusted data.
+If you need a safe alternative, consider a 3rd-party library like `cjson`.
 
-### `json.dumps(obj, indent=0) -> str`
+You can override the json functions with:
+```c
+py_GlobalRef mod = py_getmodule("json");
+py_bindfunc(mod, "loads", _safe_json_loads);
+py_bindfunc(mod, "dumps", _safe_json_dumps);
+```
 
-Encode a python object into a JSON string.
+#### Source code
+
+:::code source="../../include/typings/json.pyi" :::
 

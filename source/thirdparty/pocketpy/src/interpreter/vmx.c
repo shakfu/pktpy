@@ -114,10 +114,8 @@ py_Ref py_name2ref(py_Name name) {
     py_Ref res = CachedNames__try_get(d, name);
     if(res != NULL) return res;
     // not found, create a new one
-    py_StackRef tmp = py_pushtmp();
-    py_newstrv(tmp, py_name2sv(name));
-    CachedNames__set(d, name, tmp);
-    py_pop();
+    py_newstrv(py_tmpr0(), py_name2sv(name));
+    CachedNames__set(d, name, py_tmpr0());
     return CachedNames__try_get(d, name);
 }
 
@@ -128,4 +126,25 @@ void PyObject__dtor(PyObject* self) {
         NameDict* dict = PyObject__dict(self);
         NameDict__dtor(dict);
     }
+}
+
+ManagedHeapSwpetInfo* ManagedHeapSwpetInfo__new() {
+    ManagedHeapSwpetInfo* self = py_malloc(sizeof(ManagedHeapSwpetInfo));
+    memset(self, 0, sizeof(ManagedHeapSwpetInfo));
+    self->types_length = pk_current_vm->types.length;
+    self->small_types = py_malloc(sizeof(int) * self->types_length);
+    self->large_types = py_malloc(sizeof(int) * self->types_length);
+    for(int i = 0; i < self->types_length; i++) {
+        self->small_types[i] = 0;
+        self->large_types[i] = 0;
+    }
+    self->start_ns = time_ns();
+    return self;
+}
+
+void ManagedHeapSwpetInfo__delete(ManagedHeapSwpetInfo* self) {
+    py_free(self->small_types);
+    py_free(self->large_types);
+    memset(self, 0, sizeof(ManagedHeapSwpetInfo));
+    py_free(self);
 }

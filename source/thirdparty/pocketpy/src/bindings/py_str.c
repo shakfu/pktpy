@@ -41,6 +41,116 @@ static bool str__len__(int argc, py_Ref argv) {
     return true;
 }
 
+static bool str__mod__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    c11_string* self = pk_tostr(&argv[0]);
+    // %s
+    // %d %i
+    // %f
+    // %r
+    // %%
+    py_TValue* args;
+    int args_count;
+    if(py_istype(&argv[1], tp_tuple)) {
+        args_count = py_tuple_len(&argv[1]);
+        args = py_tuple_data(&argv[1]);
+    } else {
+        args_count = 1;
+        args = &argv[1];
+    }
+
+    int arg_index = 0;
+    const char* p = self->data;
+    const char* p_end = self->data + self->size;
+
+    c11_sbuf buf;
+    c11_sbuf__ctor(&buf);
+
+    while(p < p_end) {
+        if(*p == '%') {
+            p++;
+            if(p >= p_end) {
+                c11_sbuf__dtor(&buf);
+                return ValueError("incomplete format");
+            }
+            char spec = *p;
+            p++;
+            if(spec == '%') {
+                // %% -> %
+                c11_sbuf__write_char(&buf, '%');
+            } else if(spec == 's') {
+                // %s -> string
+                if(arg_index >= args_count) {
+                    c11_sbuf__dtor(&buf);
+                    return TypeError("not enough arguments for format string");
+                }
+                if(!py_str(&args[arg_index])) {
+                    c11_sbuf__dtor(&buf);
+                    return false;
+                }
+                c11_sbuf__write_sv(&buf, py_tosv(py_retval()));
+                arg_index++;
+            } else if(spec == 'd' || spec == 'i') {
+                // %d or %i -> integer
+                if(arg_index >= args_count) {
+                    c11_sbuf__dtor(&buf);
+                    return TypeError("not enough arguments for format string");
+                }
+                if(!py_checktype(&args[arg_index], tp_int)) {
+                    c11_sbuf__dtor(&buf);
+                    return false;
+                }
+                py_i64 val = py_toint(&args[arg_index]);
+                c11_sbuf__write_i64(&buf, val);
+                arg_index++;
+            } else if(spec == 'f') {
+                // %f -> float
+                if(arg_index >= args_count) {
+                    c11_sbuf__dtor(&buf);
+                    return TypeError("not enough arguments for format string");
+                }
+                py_f64 val;
+                if(py_istype(&args[arg_index], tp_float)) {
+                    val = py_tofloat(&args[arg_index]);
+                } else if(py_istype(&args[arg_index], tp_int)) {
+                    val = (py_f64)py_toint(&args[arg_index]);
+                } else {
+                    c11_sbuf__dtor(&buf);
+                    return TypeError("a float is required");
+                }
+                c11_sbuf__write_f64(&buf, val, 6);
+                arg_index++;
+            } else if(spec == 'r') {
+                // %r -> repr
+                if(arg_index >= args_count) {
+                    c11_sbuf__dtor(&buf);
+                    return TypeError("not enough arguments for format string");
+                }
+                if(!py_repr(&args[arg_index])) {
+                    c11_sbuf__dtor(&buf);
+                    return false;
+                }
+                c11_sbuf__write_sv(&buf, py_tosv(py_retval()));
+                arg_index++;
+            } else {
+                c11_sbuf__dtor(&buf);
+                return ValueError("unsupported format character '%c'", spec);
+            }
+        } else {
+            c11_sbuf__write_char(&buf, *p);
+            p++;
+        }
+    }
+
+    if(arg_index != args_count) {
+        c11_sbuf__dtor(&buf);
+        return TypeError("not all arguments converted during string formatting");
+    }
+
+    c11_sbuf__py_submit(&buf, py_retval());
+    return true;
+}
+
 static bool str__add__(int argc, py_Ref argv) {
     PY_CHECK_ARGC(2);
     c11_string* self = pk_tostr(&argv[0]);
@@ -118,7 +228,8 @@ static bool str__getitem__(int argc, py_Ref argv) {
     py_Ref _1 = py_arg(1);
     if(_1->type == tp_int) {
         int index = py_toint(py_arg(1));
-        if(!pk__normalize_index(&index, self.size)) return false;
+        int u8_len = c11_sv__u8_length(self);
+        if(!pk__normalize_index(&index, u8_len)) return false;
         c11_sv res = c11_sv__u8_getitem(self, index);
         py_newstrv(py_retval(), res);
         return true;
@@ -273,6 +384,25 @@ static bool str_split(int argc, py_Ref argv) {
     return true;
 }
 
+static bool str_splitlines(int argc, py_Ref argv) {
+    c11_sv self = c11_string__sv(pk_tostr(&argv[0]));
+    c11_vector res;
+    bool keepends = false;
+    if(argc > 2) return TypeError("splitlines() takes at most 2 arguments");
+    if(argc == 2) {
+        if(!py_checkbool(&argv[1])) return false;
+        keepends = py_tobool(&argv[1]);
+    }
+    res = c11_sv__splitlines(self, keepends);
+    py_newlist(py_retval());
+    for(int i = 0; i < res.length; i++) {
+        c11_sv part = c11__getitem(c11_sv, &res, i);
+        py_newstrv(py_list_emplace(py_retval()), part);
+    }
+    c11_vector__dtor(&res);
+    return true;
+}
+
 static bool str_count(int argc, py_Ref argv) {
     PY_CHECK_ARGC(2);
     c11_string* self = pk_tostr(&argv[0]);
@@ -317,6 +447,12 @@ static bool str_zfill(int argc, py_Ref argv) {
     }
     c11_sbuf buf;
     c11_sbuf__ctor(&buf);
+    // a leading sign is kept in front; the padding goes after it
+    if(self.size > 0 && (self.data[0] == '+' || self.data[0] == '-')) {
+        c11_sbuf__write_char(&buf, self.data[0]);
+        self.data++;
+        self.size--;
+    }
     for(int i = 0; i < delta; i++) {
         c11_sbuf__write_char(&buf, '0');
     }
@@ -367,12 +503,14 @@ static bool str_rjust(int argc, py_Ref argv) { return str__widthjust_impl(false,
 
 static bool str_find(int argc, py_Ref argv) {
     if(argc > 3) return TypeError("find() takes at most 3 arguments");
+    c11_string* self = pk_tostr(&argv[0]);
     int start = 0;
     if(argc == 3) {
         PY_CHECK_ARG_TYPE(2, tp_int);
         start = py_toint(py_arg(2));
+        if(start < 0) start += c11_sv__u8_length(c11_string__sv(self));
+        if(start < 0) start = 0;
     }
-    c11_string* self = pk_tostr(&argv[0]);
     PY_CHECK_ARG_TYPE(1, tp_str);
     c11_string* sub = pk_tostr(&argv[1]);
     int res = c11_sv__index2(c11_string__sv(self), c11_string__sv(sub), start);
@@ -503,6 +641,7 @@ py_Type pk_str__register() {
     py_bindmagic(tp_str, __new__, str__new__);
     py_bindmagic(tp_str, __hash__, str__hash__);
     py_bindmagic(tp_str, __len__, str__len__);
+    py_bindmagic(tp_str, __mod__, str__mod__);
     py_bindmagic(tp_str, __add__, str__add__);
     py_bindmagic(tp_str, __mul__, str__mul__);
     py_bindmagic(tp_str, __rmul__, str__rmul__);
@@ -526,6 +665,7 @@ py_Type pk_str__register() {
     py_bindmethod(tp_str, "join", str_join);
     py_bindmethod(tp_str, "replace", str_replace);
     py_bindmethod(tp_str, "split", str_split);
+    py_bindmethod(tp_str, "splitlines", str_splitlines);
     py_bindmethod(tp_str, "count", str_count);
     py_bindmethod(tp_str, "strip", str_strip);
     py_bindmethod(tp_str, "lstrip", str_lstrip);
@@ -683,6 +823,44 @@ static bool bytes__len__(int argc, py_Ref argv) {
     return true;
 }
 
+
+static bool bytes__iter__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    int* ud = py_newobject(py_retval(), tp_bytes_iterator, 1, sizeof(int));
+    *ud = 0;
+    py_setslot(py_retval(), 0, argv);  
+    return true;
+}
+
+bool bytes_iterator__next__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+
+    int* index = py_touserdata(&argv[0]);
+
+    int size;
+    unsigned char* data =
+        py_tobytes(py_getslot(argv,0), &size);
+
+    if(*index == size)
+        return StopIteration();
+
+    py_newint(py_retval(), data[*index]);
+    (*index)++;
+
+    return true;
+}
+
+py_Type pk_bytes_iterator__register() {
+    py_Type type =
+        pk_newtype("bytes_iterator", tp_object, NULL, NULL, false, true);
+
+    py_bindmagic(type, __iter__, pk_wrapper__self);
+    py_bindmagic(type, __next__, bytes_iterator__next__);
+
+    return type;
+}
+
+
 py_Type pk_bytes__register() {
     py_Type type = pk_newtype("bytes", tp_object, NULL, NULL, false, true);
     // no need to dtor because the memory is controlled by the object
@@ -695,6 +873,8 @@ py_Type pk_bytes__register() {
     py_bindmagic(tp_bytes, __add__, bytes__add__);
     py_bindmagic(tp_bytes, __hash__, bytes__hash__);
     py_bindmagic(tp_bytes, __len__, bytes__len__);
+    py_bindmagic(tp_bytes, __iter__, bytes__iter__);
+
 
     py_bindmethod(tp_bytes, "decode", bytes_decode);
     return type;

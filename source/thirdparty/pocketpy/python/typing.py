@@ -28,6 +28,8 @@ Type = _PLACEHOLDER
 TypeAlias = _PLACEHOLDER
 NewType = _PLACEHOLDER
 
+ClassVar = _PLACEHOLDER
+
 Literal = _PLACEHOLDER
 LiteralString = _PLACEHOLDER
 
@@ -38,6 +40,7 @@ Iterator = _PLACEHOLDER
 Hashable = _PLACEHOLDER
 
 TypeVar = _PLACEHOLDER
+ParamSpec = _PLACEHOLDER
 Self = _PLACEHOLDER
 
 Protocol = object
@@ -48,6 +51,7 @@ TYPE_CHECKING = False
 
 # decorators
 overload = lambda x: x
+override = lambda x: x
 final = lambda x: x
 
 # exhaustiveness checking
@@ -55,3 +59,9 @@ assert_never = lambda x: x
 
 TypedDict = dict
 NotRequired = _PLACEHOLDER
+ReadOnly = _PLACEHOLDER
+Required = _PLACEHOLDER
+TypeIs = _PLACEHOLDER
+TypeGuard = _PLACEHOLDER
+
+cast = lambda _, val: val

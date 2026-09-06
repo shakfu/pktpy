@@ -28,7 +28,8 @@
 
 #define DECLARE_HANDLE_FN(name) void c11_dap_handle_##name(py_Ref arguments, c11_sbuf*);
 DAP_COMMAND_LIST(DECLARE_HANDLE_FN)
-#undef DECLARE_ARG_FN
+#undef DECLARE_HANDLE_FN
+
 
 typedef void (*c11_dap_arg_parser_fn)(py_Ref, c11_sbuf*);
 
@@ -43,6 +44,7 @@ static dap_command_entry dap_command_table[] = {
 };
 
 #undef DAP_ENTRY
+#undef DAP_COMMAND_LIST
 
 static struct c11_dap_server {
     int dap_next_seq;
@@ -113,6 +115,7 @@ void c11_dap_handle_setBreakpoints(py_Ref arguments, c11_sbuf* buffer) {
     const char* sourcename = c11_strdup(py_tostr(py_retval()));
     if(!py_smarteval("[bp['line'] for bp in _0['breakpoints']]", NULL, arguments)) {
         py_printexc();
+        PK_FREE((void*)sourcename);
         return;
     }
     int bp_numbers = c11_debugger_reset_breakpoints_by_source(sourcename);
@@ -129,12 +132,11 @@ void c11_dap_handle_setBreakpoints(py_Ref arguments, c11_sbuf* buffer) {
     PK_FREE((void*)sourcename);
 }
 
-inline static void c11_dap_build_ExceptionInfo(const char* exc_type, const char* exc_message, c11_sbuf* buffer) {
+static void c11_dap_build_ExceptionInfo(const char* exc_type, const char* exc_message, c11_sbuf* buffer) {
     const char* safe_type = exc_type ? exc_type : "UnknownException";
     const char* safe_message = exc_message ? exc_message : "No additional details available";
 
     c11_sv type_sv = {.data = safe_type, .size = strlen(safe_type)};
-    c11_sv message_sv = {.data = safe_message, .size = strlen(safe_message)};
 
     c11_sbuf combined_buffer;
     c11_sbuf__ctor(&combined_buffer);

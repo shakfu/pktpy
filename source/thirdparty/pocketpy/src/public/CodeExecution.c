@@ -22,7 +22,7 @@ static bool _py_compile(CodeObject* out,
     SourceData_ src = SourceData__rcnew(source, filename, mode, is_dynamic);
     Error* err = pk_compile(src, out);
     if(err) {
-        py_exception(tp_SyntaxError, err->msg);
+        py_exception(tp_SyntaxError, "%s", err->msg);
         py_BaseException__stpush(NULL, &vm->unhandled_exc, err->src, err->lineno, NULL);
         PK_DECREF(src);
 
@@ -147,6 +147,22 @@ bool py_exec(const char* source, const char* filename, enum py_CompileMode mode,
     bool ok = pk_exec(&co, module);
     CodeObject__dtor(&co);
     return ok;
+}
+
+bool py_execo(const void* data, int size, const char* filename, py_Ref module) {
+    CodeObject co;
+    char* err = CodeObject__loads(data, size, filename, &co);
+    if(err == NULL) {
+        c11__rtassert(co.src->mode == EXEC_MODE);
+        c11__rtassert(co.src->is_dynamic == false);
+        bool ok = pk_exec(&co, module);
+        CodeObject__dtor(&co);
+        return ok;
+    } else {
+        bool ok = RuntimeError("bad code object %s: %s", filename, err);
+        PK_FREE(err);
+        return ok;
+    }
 }
 
 bool py_eval(const char* source, py_Ref module) {

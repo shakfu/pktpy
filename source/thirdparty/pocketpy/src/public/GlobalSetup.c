@@ -5,7 +5,7 @@
 #include "pocketpy/common/name.h"
 #include "pocketpy/interpreter/vm.h"
 
-_Thread_local VM* pk_current_vm;
+PK_THREAD_LOCAL VM* pk_current_vm;
 
 static bool pk_initialized;
 static bool pk_finalized;
@@ -31,6 +31,10 @@ void py_initialize() {
 
     _Static_assert(sizeof(py_TValue) == 24, "sizeof(py_TValue) != 24");
     _Static_assert(offsetof(py_TValue, extra) == 4, "offsetof(py_TValue, extra) != 4");
+
+    // check sizes
+    _Static_assert(sizeof(float) == 4, "");
+    _Static_assert(sizeof(double) == 8, "");
 
     pk_current_vm = pk_all_vm[0] = &pk_default_vm;
 
@@ -65,12 +69,14 @@ void py_finalize() {
     pk_names_finalize();
 }
 
-int py_currentvm() {
+int VM__index(VM* self) {
     for(int i = 0; i < 16; i++) {
-        if(pk_all_vm[i] == pk_current_vm) return i;
+        if(pk_all_vm[i] == self) return i;
     }
     return -1;
 }
+
+int py_currentvm() { return VM__index(pk_current_vm); }
 
 void py_switchvm(int index) {
     if(index < 0 || index >= 16) c11__abort("invalid vm index");
@@ -104,13 +110,18 @@ void py_setvmctx(void* ctx) { pk_current_vm->ctx = ctx; }
 
 py_Callbacks* py_callbacks() { return &pk_current_vm->callbacks; }
 
+py_AppCallbacks* py_appcallbacks() {
+    static py_AppCallbacks _callbacks = {0};
+    return &_callbacks;
+}
+
 /////////////////////////////
 
 void py_sys_setargv(int argc, char** argv) {
     py_GlobalRef sys = py_getmodule("sys");
     py_Ref argv_list = py_getdict(sys, py_name("argv"));
     py_list_clear(argv_list);
-    for(int i = 0; i < argc; i++) {
+    for(int i = 1; i < argc; i++) {
         py_newstr(py_list_emplace(argv_list), argv[i]);
     }
 }

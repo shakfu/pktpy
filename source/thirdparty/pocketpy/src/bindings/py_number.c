@@ -1,8 +1,8 @@
 #include "pocketpy/interpreter/vm.h"
 #include "pocketpy/common/sstream.h"
+#include "pocketpy/common/dmath.h"
 #include "pocketpy/pocketpy.h"
 
-#include <math.h>
 
 static bool try_castfloat(py_Ref self, double* out) {
     switch(self->type) {
@@ -100,7 +100,7 @@ static bool number__pow__(int argc, py_Ref argv) {
             if(lhs == 0) {
                 return ZeroDivisionError("0.0 cannot be raised to a negative power");
             } else {
-                py_newfloat(py_retval(), pow(lhs, rhs));
+                py_newfloat(py_retval(), dmath_pow(lhs, rhs));
             }
         } else {
             // rhs >= 0
@@ -117,7 +117,7 @@ static bool number__pow__(int argc, py_Ref argv) {
         py_f64 lhs, rhs;
         if(!py_castfloat(&argv[0], &lhs)) return false;
         if(try_castfloat(&argv[1], &rhs)) {
-            py_newfloat(py_retval(), pow(lhs, rhs));
+            py_newfloat(py_retval(), dmath_pow(lhs, rhs));
         } else {
             py_newnotimplemented(py_retval());
         }
@@ -127,7 +127,7 @@ static bool number__pow__(int argc, py_Ref argv) {
 
 static py_i64 i64_abs(py_i64 x) { return x < 0 ? -x : x; }
 
-static py_i64 cpy11__fast_floor_div(py_i64 a, py_i64 b) {
+py_i64 cpy312__int_floordiv(py_i64 a, py_i64 b) {
     assert(b != 0);
     if(a == 0) return 0;
     if((a < 0) == (b < 0)) {
@@ -137,7 +137,7 @@ static py_i64 cpy11__fast_floor_div(py_i64 a, py_i64 b) {
     }
 }
 
-static py_i64 cpy11__fast_mod(py_i64 a, py_i64 b) {
+py_i64 cpy312__int_mod(py_i64 a, py_i64 b) {
     assert(b != 0);
     if(a == 0) return 0;
     py_i64 res;
@@ -150,10 +150,10 @@ static py_i64 cpy11__fast_mod(py_i64 a, py_i64 b) {
 }
 
 // https://github.com/python/cpython/blob/3.11/Objects/floatobject.c#L677
-static void cpy11__float_div_mod(double vx, double wx, double *floordiv, double *mod)
+void cpy312__float_divmod(double vx, double wx, double *floordiv, double *mod)
 {
     double div;
-    *mod = fmod(vx, wx);
+    *mod = dmath_fmod(vx, wx);
     /* fmod is typically exact, so vx-mod is *mathematically* an
        exact multiple of wx.  But this is fp arithmetic, and fp
        vx - mod is an approximation; the result is that div may
@@ -172,18 +172,18 @@ static void cpy11__float_div_mod(double vx, double wx, double *floordiv, double 
         /* the remainder is zero, and in the presence of signed zeroes
            fmod returns different results across platforms; ensure
            it has the same sign as the denominator. */
-        *mod = copysign(0.0, wx);
+        *mod = dmath_copysign(0.0, wx);
     }
     /* snap quotient to nearest integral value */
     if (div) {
-        *floordiv = floor(div);
+        *floordiv = dmath_floor(div);
         if (div - *floordiv > 0.5) {
             *floordiv += 1.0;
         }
     }
     else {
         /* div is zero - get the same sign as the true quotient */
-        *floordiv = copysign(0.0, vx / wx); /* zero w/ sign of vx/wx */
+        *floordiv = dmath_copysign(0.0, vx / wx); /* zero w/ sign of vx/wx */
     }
 }
 
@@ -193,7 +193,7 @@ static bool int__floordiv__(int argc, py_Ref argv) {
     if(py_isint(&argv[1])) {
         py_i64 rhs = py_toint(&argv[1]);
         if(rhs == 0) return ZeroDivisionError("integer division by zero");
-        py_newint(py_retval(), cpy11__fast_floor_div(lhs, rhs));
+        py_newint(py_retval(), cpy312__int_floordiv(lhs, rhs));
     } else {
         py_newnotimplemented(py_retval());
     }
@@ -206,7 +206,7 @@ static bool int__mod__(int argc, py_Ref argv) {
     if(py_isint(&argv[1])) {
         py_i64 rhs = py_toint(&argv[1]);
         if(rhs == 0) return ZeroDivisionError("integer modulo by zero");
-        py_newint(py_retval(), cpy11__fast_mod(lhs, rhs));
+        py_newint(py_retval(), cpy312__int_mod(lhs, rhs));
     } else {
         py_newnotimplemented(py_retval());
     }
@@ -220,7 +220,7 @@ static bool float__floordiv__(int argc, py_Ref argv) {
     if(try_castfloat(&argv[1], &rhs)) {
         if(rhs == 0.0) return ZeroDivisionError("float modulo by zero");
         double q, r;
-        cpy11__float_div_mod(lhs, rhs, &q, &r);
+        cpy312__float_divmod(lhs, rhs, &q, &r);
         py_newfloat(py_retval(), q);
         return true;
     }
@@ -235,7 +235,7 @@ static bool float__rfloordiv__(int argc, py_Ref argv) {
     if(try_castfloat(&argv[1], &lhs)) {
         if(rhs == 0.0) return ZeroDivisionError("float modulo by zero");
         double q, r;
-        cpy11__float_div_mod(lhs, rhs, &q, &r);
+        cpy312__float_divmod(lhs, rhs, &q, &r);
         py_newfloat(py_retval(), q);
         return true;
     }
@@ -250,7 +250,7 @@ static bool float__mod__(int argc, py_Ref argv) {
     if(try_castfloat(&argv[1], &rhs)) {
         if(rhs == 0.0) return ZeroDivisionError("float modulo by zero");
         double q, r;
-        cpy11__float_div_mod(lhs, rhs, &q, &r);
+        cpy312__float_divmod(lhs, rhs, &q, &r);
         py_newfloat(py_retval(), r);
         return true;
     }
@@ -265,7 +265,7 @@ static bool float__rmod__(int argc, py_Ref argv) {
     if(try_castfloat(&argv[1], &lhs)) {
         if(rhs == 0.0) return ZeroDivisionError("float modulo by zero");
         double q, r;
-        cpy11__float_div_mod(lhs, rhs, &q, &r);
+        cpy312__float_divmod(lhs, rhs, &q, &r);
         py_newfloat(py_retval(), r);
         return true;
     }
@@ -280,7 +280,7 @@ static bool float__divmod__(int argc, py_Ref argv) {
     if(try_castfloat(&argv[1], &rhs)) {
         if(rhs == 0.0) return ZeroDivisionError("float modulo by zero");
         double q, r;
-        cpy11__float_div_mod(lhs, rhs, &q, &r);
+        cpy312__float_divmod(lhs, rhs, &q, &r);
         py_Ref p = py_newtuple(py_retval(), 2);
         py_newfloat(&p[0], q);
         py_newfloat(&p[1], r);
@@ -296,8 +296,8 @@ static bool int__divmod__(int argc, py_Ref argv) {
     py_i64 rhs = py_toint(&argv[1]);
     if(rhs == 0) return ZeroDivisionError("integer division or modulo by zero");
     py_Ref p = py_newtuple(py_retval(), 2);
-    py_newint(&p[0], cpy11__fast_floor_div(lhs, rhs));
-    py_newint(&p[1], cpy11__fast_mod(lhs, rhs));
+    py_newint(&p[0], cpy312__int_floordiv(lhs, rhs));
+    py_newint(&p[1], cpy312__int_mod(lhs, rhs));
     return true;
 }
 
@@ -384,7 +384,7 @@ static bool int__abs__(int argc, py_Ref argv) {
 static bool float__abs__(int argc, py_Ref argv) {
     PY_CHECK_ARGC(1);
     py_f64 val = py_tofloat(&argv[0]);
-    py_newfloat(py_retval(), val < 0 ? -val : val);
+    py_newfloat(py_retval(), dmath_fabs(val));
     return true;
 }
 
@@ -471,11 +471,11 @@ static bool float__new__(int argc, py_Ref argv) {
             c11_sv sv = py_tosv(py_arg(1));
 
             if(c11__sveq2(sv, "inf")) {
-                py_newfloat(py_retval(), INFINITY);
+                py_newfloat(py_retval(), DMATH_INFINITY);
                 return true;
             }
             if(c11__sveq2(sv, "-inf")) {
-                py_newfloat(py_retval(), -INFINITY);
+                py_newfloat(py_retval(), -DMATH_INFINITY);
                 return true;
             }
 
@@ -567,6 +567,66 @@ static bool bool__invert__(int argc, py_Ref argv) {
     return true;
 }
 
+static bool bool_try_cast_i64(py_Ref arg, py_i64* out) {
+    if (arg->type == tp_int) {
+        *out = py_toint(arg);
+        return true;
+    } else if (arg->type == tp_bool) {
+        *out = py_tobool(arg);
+        return true;
+    } else {
+        return false;
+    }
+}
+
+static bool bool__add__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    py_i64 lhs = py_tobool(py_arg(0));
+    py_i64 rhs;
+    if (bool_try_cast_i64(py_arg(1), &rhs)) {
+        py_newint(py_retval(), lhs + rhs);
+    } else {
+        py_newnotimplemented(py_retval());
+    }
+    return true;
+}
+
+static bool bool__sub__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    py_i64 lhs = py_tobool(py_arg(0));
+    py_i64 rhs;
+    if (bool_try_cast_i64(py_arg(1), &rhs)) {
+        py_newint(py_retval(), lhs - rhs);
+    } else {
+        py_newnotimplemented(py_retval());
+    }
+    return true;
+}
+
+static bool bool__rsub__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    py_i64 lhs = py_tobool(py_arg(0));
+    py_i64 rhs;
+    if (bool_try_cast_i64(py_arg(1), &rhs)) {
+        py_newint(py_retval(), rhs - lhs);
+    } else {
+        py_newnotimplemented(py_retval());
+    }
+    return true;
+}
+
+static bool bool__mul__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(2);
+    py_i64 lhs = py_tobool(py_arg(0));
+    py_i64 rhs;
+    if (bool_try_cast_i64(py_arg(1), &rhs)) {
+        py_newint(py_retval(), lhs * rhs);
+    } else {
+        py_newnotimplemented(py_retval());
+    }
+    return true;
+}
+
 void pk_number__register() {
     /****** tp_int & tp_float ******/
     py_bindmagic(tp_int, __add__, int__add__);
@@ -651,6 +711,12 @@ void pk_number__register() {
     py_bindmagic(tp_bool, __or__, bool__or__);
     py_bindmagic(tp_bool, __xor__, bool__xor__);
     py_bindmagic(tp_bool, __invert__, bool__invert__);
+    py_bindmagic(tp_bool, __add__, bool__add__);
+    py_bindmagic(tp_bool, __sub__, bool__sub__);
+    py_bindmagic(tp_bool, __mul__, bool__mul__);
+    py_bindmagic(tp_bool, __radd__, bool__add__);
+    py_bindmagic(tp_bool, __rsub__, bool__rsub__);
+    py_bindmagic(tp_bool, __rmul__, bool__mul__);
 }
 
 #undef DEF_NUM_BINARY_OP

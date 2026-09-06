@@ -152,15 +152,21 @@ __NEXT_STEP:
             *THIRD() = tmp;
             DISPATCH();
         }
-        case OP_PRINT_EXPR:
-            if(TOP()->type != tp_NoneType) {
-                bool ok = py_repr(TOP());
+        case OP_PRINT_EXPR: {
+            if(self->callbacks.displayhook) {
+                bool ok = self->callbacks.displayhook(TOP());
                 if(!ok) goto __ERROR;
-                self->callbacks.print(py_tostr(&self->last_retval));
-                self->callbacks.print("\n");
+            } else {
+                if(TOP()->type != tp_NoneType) {
+                    bool ok = py_repr(TOP());
+                    if(!ok) goto __ERROR;
+                    self->callbacks.print(py_tostr(&self->last_retval));
+                    self->callbacks.print("\n");
+                }
             }
             POP();
             DISPATCH();
+        }
         /*****************************************/
         case OP_LOAD_CONST: {
             PUSH(c11__at(py_TValue, &frame->co->consts, byte.arg));
@@ -181,6 +187,11 @@ __NEXT_STEP:
         /*****************************************/
         case OP_LOAD_SMALL_INT: {
             py_newint(SP()++, (int16_t)byte.arg);
+            DISPATCH();
+        }
+        case OP_LOAD_NAME_AS_INT: {
+            py_Name name = co_names[byte.arg];
+            py_newint(SP()++, (uintptr_t)name);
             DISPATCH();
         }
         /*****************************************/
@@ -314,6 +325,23 @@ __NEXT_STEP:
             }
             DISPATCH();
         }
+        case OP_LOAD_SELF_ATTR: {
+            assert(!frame->is_locals_special);
+            py_Ref val = &frame->locals[0];
+            if(!py_isnil(val)) {
+                // LOAD_ATTR
+                py_Name name = co_names[byte.arg];
+                if(py_getattr(val, name)) {
+                    PUSH(py_retval());
+                } else {
+                    goto __ERROR;
+                }
+                DISPATCH();
+            }
+            py_Name name = c11__getitem(py_Name, &frame->co->varnames, byte.arg);
+            UnboundLocalError(name);
+            goto __ERROR;
+        }
         case OP_LOAD_CLASS_GLOBAL: {
             assert(self->curr_class);
             py_Name name = co_names[byte.arg];
@@ -415,6 +443,20 @@ __NEXT_STEP:
             if(!py_setattr(TOP(), name, SECOND())) goto __ERROR;
             STACK_SHRINK(2);
             DISPATCH();
+        }
+        case OP_STORE_SELF_ATTR: {
+            assert(!frame->is_locals_special);
+            py_Ref val = &frame->locals[0];
+            if(!py_isnil(val)) {
+                // [val, a] -> a.b = val
+                py_Name name = co_names[byte.arg];
+                if(!py_setattr(val, name, TOP())) goto __ERROR;
+                POP();
+                DISPATCH();
+            }
+            py_Name name = c11__getitem(py_Name, &frame->co->varnames, byte.arg);
+            UnboundLocalError(name);
+            goto __ERROR;
         }
         case OP_STORE_SUBSCR: {
             // [val, a, b] -> a[b] = val
@@ -528,11 +570,15 @@ __NEXT_STEP:
             DISPATCH();
         }
         case OP_BUILD_TUPLE: {
+            bool need_track = false;
             py_TValue tmp;
             py_Ref p = py_newtuple(&tmp, byte.arg);
             py_TValue* begin = SP() - byte.arg;
-            for(int i = 0; i < byte.arg; i++)
+            for(int i = 0; i < byte.arg; i++) {
                 p[i] = begin[i];
+                if(p[i].is_ptr) need_track = true;
+            }
+            if(!need_track) tmp._obj->gc_marked |= 0b10;
             SP() = begin;
             PUSH(&tmp);
             DISPATCH();
@@ -723,7 +769,7 @@ __NEXT_STEP:
         }
         /*****************************************/
         case OP_CALL: {
-            ManagedHeap__collect_if_needed(&self->heap);
+            if(self->heap.gc_enabled) ManagedHeap__collect_hint(&self->heap);
             vectorcall_opcall(byte.arg & 0xFF, byte.arg >> 8);
             DISPATCH();
         }
@@ -1131,10 +1177,39 @@ __NEXT_STEP:
             DISPATCH();
         }
         case OP_EXCEPTION_MATCH: {
-            if(!py_checktype(TOP(), tp_type)) goto __ERROR;
-            bool ok = py_isinstance(&self->unhandled_exc, py_totype(TOP()));
-            py_newbool(TOP(), ok);
-            DISPATCH();
+            bool ok = false;
+            bool has_invalid = false;
+            if(TOP()->type == tp_type) {
+                ok = py_isinstance(&self->unhandled_exc, py_totype(TOP()));
+            } else if(TOP()->type == tp_tuple) {
+                int len = py_tuple_len(TOP());
+                py_ObjectRef data = py_tuple_data(TOP());
+                for(int i = 0; i < len; i++) {
+                    if((data + i)->type != tp_type) {
+                        has_invalid = true;
+                        break;
+                    }
+                }
+                if(!has_invalid) {
+                    for(int i = 0; i < len; i++) {
+                        if(py_isinstance(&self->unhandled_exc, py_totype(data + i))) {
+                            ok = true;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                has_invalid = true;
+            }
+            if(has_invalid) {
+                py_newnil(&self->unhandled_exc);
+                TypeError("catching classes that do not inherit from BaseException is not allowed");
+                c11_vector__pop(&frame->exc_stack);
+                goto __ERROR;
+            } else {
+                py_newbool(TOP(), ok);
+                DISPATCH();
+            }
         }
         case OP_HANDLE_EXCEPTION: {
             FrameExcInfo* info = Frame__top_exc_info(frame);
@@ -1204,7 +1279,7 @@ __ERROR:
 __ERROR_RE_RAISE:
     do {
         self->curr_class = NULL;
-        self->curr_decl_based_function = NULL;
+        self->curr_function = NULL;
     } while(0);
 
     int target = Frame__goto_exception_handler(frame, &self->stack, &self->unhandled_exc);
@@ -1439,7 +1514,6 @@ bool pk_format_object(VM* self, py_Ref val, c11_sv spec) {
     return true;
 }
 
-#undef CHECK_RETURN_FROM_EXCEPT_OR_FINALLY
 #undef DISPATCH
 #undef DISPATCH_JUMP
 #undef DISPATCH_JUMP_ABSOLUTE

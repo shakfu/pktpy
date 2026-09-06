@@ -1,5 +1,6 @@
 #include "pocketpy/objects/base.h"
 #include "pocketpy/pocketpy.h"
+#include "pocketpy/interpreter/types.h"
 #include "pocketpy/interpreter/vm.h"
 
 #if PK_ENABLE_OS
@@ -47,6 +48,7 @@ static bool os_chdir(int argc, py_Ref argv) {
 }
 
 static bool os_getcwd(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(0);
     char buf[1024];
     if(!platform_getcwd(buf, sizeof(buf))) return OSError("getcwd() failed");
     py_newstr(py_retval(), buf);
@@ -101,12 +103,6 @@ void pk__add_module_os() {
     py_newdict(py_emplacedict(mod, py_name("environ")));
 }
 
-typedef struct {
-    const char* path;
-    const char* mode;
-    FILE* file;
-} io_FileIO;
-
 static bool io_FileIO__new__(int argc, py_Ref argv) {
     // __new__(cls, file, mode)
     PY_CHECK_ARGC(3);
@@ -141,6 +137,7 @@ static bool io_FileIO__exit__(int argc, py_Ref argv) {
 
 static bool io_FileIO_read(int argc, py_Ref argv) {
     io_FileIO* ud = py_touserdata(py_arg(0));
+    if(ud->file == NULL) return ValueError("I/O operation on closed file");
     bool is_binary = ud->mode[strlen(ud->mode) - 1] == 'b';
     int size;
     if(argc == 1) {
@@ -151,24 +148,37 @@ static bool io_FileIO_read(int argc, py_Ref argv) {
     } else if(argc == 2) {
         PY_CHECK_ARG_TYPE(1, tp_int);
         size = py_toint(py_arg(1));
+        if (size < 0) {
+            long current = ftell(ud->file);
+            fseek(ud->file, 0, SEEK_END);
+            size = ftell(ud->file);
+            fseek(ud->file, current, SEEK_SET);
+        }
     } else {
         return TypeError("read() takes at most 2 arguments (%d given)", argc);
     }
     if(is_binary) {
         void* dst = py_newbytes(py_retval(), size);
-        int actual_size = fread(dst, 1, size, ud->file);
-        py_bytes_resize(py_retval(), actual_size);
+        if(size > 0) {
+            int actual_size = fread(dst, 1, size, ud->file);
+            py_bytes_resize(py_retval(), actual_size);
+        }
     } else {
-        void* dst = PK_MALLOC(size);
-        int actual_size = fread(dst, 1, size, ud->file);
-        py_newstrv(py_retval(), (c11_sv){dst, actual_size});
-        PK_FREE(dst);
+        if(size > 0) {
+            void* dst = PK_MALLOC(size);
+            int actual_size = fread(dst, 1, size, ud->file);
+            py_newstrv(py_retval(), (c11_sv){dst, actual_size});
+            PK_FREE(dst);
+        } else {
+            py_newstr(py_retval(), "");
+        }
     }
     return true;
 }
 
 static bool io_FileIO_tell(int argc, py_Ref argv) {
     io_FileIO* ud = py_touserdata(py_arg(0));
+    if(ud->file == NULL) return ValueError("I/O operation on closed file");
     py_newint(py_retval(), ftell(ud->file));
     return true;
 }
@@ -178,6 +188,7 @@ static bool io_FileIO_seek(int argc, py_Ref argv) {
     PY_CHECK_ARG_TYPE(1, tp_int);
     PY_CHECK_ARG_TYPE(2, tp_int);
     io_FileIO* ud = py_touserdata(py_arg(0));
+    if(ud->file == NULL) return ValueError("I/O operation on closed file");
     long cookie = py_toint(py_arg(1));
     int whence = py_toint(py_arg(2));
     py_newint(py_retval(), fseek(ud->file, cookie, whence));
@@ -198,6 +209,7 @@ static bool io_FileIO_close(int argc, py_Ref argv) {
 static bool io_FileIO_write(int argc, py_Ref argv) {
     PY_CHECK_ARGC(2);
     io_FileIO* ud = py_touserdata(py_arg(0));
+    if(ud->file == NULL) return ValueError("I/O operation on closed file");
     size_t written_size;
     if(ud->mode[strlen(ud->mode) - 1] == 'b') {
         PY_CHECK_ARG_TYPE(1, tp_bytes);
@@ -213,10 +225,19 @@ static bool io_FileIO_write(int argc, py_Ref argv) {
     return true;
 }
 
+static bool io_FileIO_flush(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    io_FileIO* ud = py_touserdata(py_arg(0));
+    if(ud->file == NULL) return ValueError("I/O operation on closed file");
+    fflush(ud->file);
+    py_newnone(py_retval());
+    return true;
+}
+
 void pk__add_module_io() {
     py_Ref mod = py_newmodule("io");
-
-    py_Type FileIO = pk_newtype("FileIO", tp_object, mod, NULL, false, true);
+    py_Type FileIO = py_newtype("FileIO", tp_object, mod, NULL);
+    py_tpsetfinal(FileIO);
 
     py_bindmagic(FileIO, __new__, io_FileIO__new__);
     py_bindmagic(FileIO, __enter__, io_FileIO__enter__);
@@ -226,6 +247,7 @@ void pk__add_module_io() {
     py_bindmethod(FileIO, "close", io_FileIO_close);
     py_bindmethod(FileIO, "tell", io_FileIO_tell);
     py_bindmethod(FileIO, "seek", io_FileIO_seek);
+    py_bindmethod(FileIO, "flush", io_FileIO_flush);
 
     py_newint(py_emplacedict(mod, py_name("SEEK_SET")), SEEK_SET);
     py_newint(py_emplacedict(mod, py_name("SEEK_CUR")), SEEK_CUR);

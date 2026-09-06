@@ -22,7 +22,7 @@ c11_array2d* c11_newarray2d(py_OutRef out, int n_cols, int n_rows) {
     ud->header.n_cols = n_cols;
     ud->header.n_rows = n_rows;
     ud->header.numel = numel;
-    ud->header.f_get = (py_Ref(*)(c11_array2d_like*, int, int))c11_array2d__get;
+    ud->header.f_get = (py_Ref (*)(c11_array2d_like*, int, int))c11_array2d__get;
     ud->header.f_set = (bool (*)(c11_array2d_like*, int, int, py_Ref))c11_array2d__set;
     ud->data = py_getslot(out, 0);
     return ud;
@@ -131,10 +131,90 @@ static bool array2d_like_render(int argc, py_Ref argv) {
     for(int j = 0; j < self->n_rows; j++) {
         for(int i = 0; i < self->n_cols; i++) {
             py_Ref item = self->f_get(self, i, j);
-            if(!py_str(item)) return false;
+            if(!py_str(item)) {
+                c11_sbuf__dtor(&buf);
+                return false;
+            }
             c11_sbuf__write_sv(&buf, py_tosv(py_retval()));
         }
         if(j < self->n_rows - 1) c11_sbuf__write_char(&buf, '\n');
+    }
+    c11_sbuf__py_submit(&buf, py_retval());
+    return true;
+}
+
+void c11_color32_premult(c11_color32* color);
+
+static bool array2d_like_render_with_color(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(3);
+    c11_sbuf buf;
+    c11_sbuf__ctor(&buf);
+    c11_array2d_like* self = py_touserdata(argv);
+
+    if(!py_checkinstance(py_arg(1), tp_array2d_like)) return false;
+    if(!py_checkinstance(py_arg(2), tp_array2d_like)) return false;
+    c11_array2d_like* fg_colors = py_touserdata(py_arg(1));
+    c11_array2d_like* bg_colors = py_touserdata(py_arg(2));
+
+    c11_color32 curr_fg, curr_bg;
+    curr_fg.u32 = 0;
+    curr_bg.u32 = 0;
+
+    for(int j = 0; j < self->n_rows; j++) {
+        for(int i = 0; i < self->n_cols; i++) {
+            py_Ref item = self->f_get(self, i, j);
+            if(!py_str(item)) {
+                c11_sbuf__dtor(&buf);
+                return false;
+            }
+
+            py_Ref fg_item = fg_colors->f_get(fg_colors, i, j);
+            py_Ref bg_item = bg_colors->f_get(bg_colors, i, j);
+
+            c11_color32 new_fg, new_bg;
+            if(py_isnone(fg_item)) {
+                new_fg.u32 = 0;
+            } else {
+                if(!py_checktype(fg_item, tp_color32)) {
+                    c11_sbuf__dtor(&buf);
+                    return false;
+                }
+                new_fg = py_tocolor32(fg_item);
+            }
+            if(py_isnone(bg_item)) {
+                new_bg.u32 = 0;
+            } else {
+                if(!py_checktype(bg_item, tp_color32)) {
+                    c11_sbuf__dtor(&buf);
+                    return false;
+                }
+                new_bg = py_tocolor32(bg_item);
+            }
+
+            if(curr_fg.u32 != new_fg.u32 || curr_bg.u32 != new_bg.u32) {
+                if(curr_fg.u32 != 0 || curr_bg.u32 != 0) c11_sbuf__write_cstr(&buf, "\x1b[0m");
+                curr_fg = new_fg;
+                curr_bg = new_bg;
+                if(curr_fg.u32 != 0) {
+                    c11_color32_premult(&curr_fg);
+                    pk_sprintf(&buf, "\x1b[38;2;%d;%d;%dm", curr_fg.r, curr_fg.g, curr_fg.b);
+                }
+                if(curr_bg.u32 != 0) {
+                    c11_color32_premult(&curr_bg);
+                    pk_sprintf(&buf, "\x1b[48;2;%d;%d;%dm", curr_bg.r, curr_bg.g, curr_bg.b);
+                }
+            }
+
+            c11_sbuf__write_sv(&buf, py_tosv(py_retval()));
+        }
+        // newline
+        if(j < self->n_rows - 1) {
+            curr_fg.u32 = 0;
+            curr_bg.u32 = 0;
+            c11_sbuf__write_cstr(&buf, "\x1b[0m\n");
+        } else {
+            c11_sbuf__write_cstr(&buf, "\x1b[0m");
+        }
     }
     c11_sbuf__py_submit(&buf, py_retval());
     return true;
@@ -409,7 +489,7 @@ static c11_array2d_view* _array2d_view__new(py_OutRef out,
     res->header.n_cols = width;
     res->header.n_rows = height;
     res->header.numel = width * height;
-    res->header.f_get = (py_Ref(*)(c11_array2d_like*, int, int))c11_array2d_view__get;
+    res->header.f_get = (py_Ref (*)(c11_array2d_like*, int, int))c11_array2d_view__get;
     res->header.f_set = (bool (*)(c11_array2d_like*, int, int, py_Ref))c11_array2d_view__set;
     res->origin.x = start_col;
     res->origin.y = start_row;
@@ -427,7 +507,7 @@ static bool _array2d_view(py_OutRef out,
     c11_array2d_view* res = _array2d_view__new(out, keepalive, start_col, start_row, width, height);
     if(res == NULL) return false;
     res->ctx = array;
-    res->f_get = (py_Ref(*)(void*, int, int))array->f_get;
+    res->f_get = (py_Ref (*)(void*, int, int))array->f_get;
     res->f_set = (bool (*)(void*, int, int, py_Ref))array->f_set;
     return true;
 }
@@ -442,7 +522,7 @@ static bool _chunked_array2d_view(py_OutRef out,
     c11_array2d_view* res = _array2d_view__new(out, keepalive, start_col, start_row, width, height);
     if(res == NULL) return false;
     res->ctx = array;
-    res->f_get = (py_Ref(*)(void*, int, int))c11_chunked_array2d__get;
+    res->f_get = (py_Ref (*)(void*, int, int))c11_chunked_array2d__get;
     res->f_set = (bool (*)(void*, int, int, py_Ref))c11_chunked_array2d__set;
     return true;
 }
@@ -754,6 +834,7 @@ static void register_array2d_like(py_Ref mod) {
     py_bindmethod(type, "index", array2d_like_index);
 
     py_bindmethod(type, "render", array2d_like_render);
+    py_bindmethod(type, "render_with_color", array2d_like_render_with_color);
 
     py_bindmethod(type, "all", array2d_like_all);
     py_bindmethod(type, "any", array2d_like_any);
@@ -921,33 +1002,28 @@ static void register_array2d_view(py_Ref mod) {
 #include "pocketpy/xmacros/smallmap.h"
 #undef SMALLMAP_T__SOURCE
 
-static py_TValue* c11_chunked_array2d__new_chunk(c11_chunked_array2d* self, c11_vec2i pos) {
-#ifndef NDEBUG
+static py_TValue* c11_chunked_array2d__new_chunk(c11_chunked_array2d* self, c11_vec2i pos, py_Ref context) {
     bool exists = c11_chunked_array2d_chunks__contains(&self->chunks, pos);
-    assert(!exists);
-#endif
+    if(exists) {
+        ValueError("chunk already exists at pos (%d, %d)", pos.x, pos.y);
+        return NULL;
+    }
     int chunk_numel = self->chunk_size * self->chunk_size + 1;
     py_TValue* data = PK_MALLOC(sizeof(py_TValue) * chunk_numel);
-    if(!py_isnone(&self->context_builder)) {
-        py_newvec2i(&data[0], pos);
-        bool ok = py_call(&self->context_builder, 1, &data[0]);
-        if(!ok) {
-            PK_FREE(data);
-            return NULL;
-        }
-        data[0] = *py_retval();
-    } else {
-        data[0] = *py_None();
-    }
+    data[0] = *context;
     memset(&data[1], 0, sizeof(py_TValue) * (chunk_numel - 1));
     c11_chunked_array2d_chunks__set(&self->chunks, pos, data);
     self->last_visited.key = pos;
     self->last_visited.value = data;
+    // init data with default value
+    for(int i = 1; i < chunk_numel; i++) {
+        data[i] = self->default_T;
+    }
     return data;
 }
 
 static void
-    cpy11__divmod_int_uint(int a, int b_log2, int b_mask, int* restrict q, int* restrict r) {
+    cpy312__divmod_int_uint(int a, int b_log2, int b_mask, int* restrict q, int* restrict r) {
     if(a >= 0) {
         *q = a >> b_log2;
         *r = a & b_mask;
@@ -962,12 +1038,12 @@ static void c11_chunked_array2d__world_to_chunk(c11_chunked_array2d* self,
                                                 int row,
                                                 c11_vec2i* restrict chunk_pos,
                                                 c11_vec2i* restrict local_pos) {
-    cpy11__divmod_int_uint(col,
+    cpy312__divmod_int_uint(col,
                            self->chunk_size_log2,
                            self->chunk_size_mask,
                            &chunk_pos->x,
                            &local_pos->x);
-    cpy11__divmod_int_uint(row,
+    cpy312__divmod_int_uint(row,
                            self->chunk_size_log2,
                            self->chunk_size_mask,
                            &chunk_pos->y,
@@ -996,37 +1072,34 @@ static py_TValue* c11_chunked_array2d__parse_col_row(c11_chunked_array2d* self,
 py_Ref c11_chunked_array2d__get(c11_chunked_array2d* self, int col, int row) {
     c11_vec2i chunk_pos, local_pos;
     py_TValue* data = c11_chunked_array2d__parse_col_row(self, col, row, &chunk_pos, &local_pos);
-    if(data == NULL) return &self->default_T;
-    py_Ref retval = &data[1 + local_pos.y * self->chunk_size + local_pos.x];
-    if(py_isnil(retval)) return &self->default_T;
-    return retval;
+    if(data == NULL) return NULL;
+    return &data[1 + local_pos.y * self->chunk_size + local_pos.x];
 }
 
 bool c11_chunked_array2d__set(c11_chunked_array2d* self, int col, int row, py_Ref value) {
     c11_vec2i chunk_pos, local_pos;
     py_TValue* data = c11_chunked_array2d__parse_col_row(self, col, row, &chunk_pos, &local_pos);
     if(data == NULL) {
-        data = c11_chunked_array2d__new_chunk(self, chunk_pos);
-        if(data == NULL) return false;
+        if(self->auto_add_chunk) {
+            data = c11_chunked_array2d__new_chunk(self, chunk_pos, py_None());
+            if(data == NULL) return false;
+        } else {
+            return IndexError("(%d, %d) is out of bounds and !auto_add_chunk", col, row);
+        }
     }
     data[1 + local_pos.y * self->chunk_size + local_pos.x] = *value;
     return true;
 }
 
-static void c11_chunked_array2d__del(c11_chunked_array2d* self, int col, int row) {
-    c11_vec2i chunk_pos, local_pos;
-    py_TValue* data = c11_chunked_array2d__parse_col_row(self, col, row, &chunk_pos, &local_pos);
-    if(data != NULL) data[1 + local_pos.y * self->chunk_size + local_pos.x] = *py_NIL();
-}
-
 static bool chunked_array2d__new__(int argc, py_Ref argv) {
     PY_CHECK_ARGC(4);
     PY_CHECK_ARG_TYPE(1, tp_int);
+    PY_CHECK_ARG_TYPE(3, tp_bool);
     py_Type cls = py_totype(argv);
     c11_chunked_array2d* self = py_newobject(py_retval(), cls, 0, sizeof(c11_chunked_array2d));
     int chunk_size = py_toint(&argv[1]);
     self->default_T = argv[2];
-    self->context_builder = argv[3];
+    self->auto_add_chunk = py_tobool(&argv[3]);
     c11_chunked_array2d_chunks__ctor(&self->chunks);
     self->chunk_size = chunk_size;
     switch(chunk_size) {
@@ -1056,26 +1129,13 @@ static bool chunked_array2d_chunk_size(int argc, py_Ref argv) {
     return true;
 }
 
-static bool chunked_array2d_default(int argc, py_Ref argv) {
-    PY_CHECK_ARGC(1);
-    c11_chunked_array2d* self = py_touserdata(argv);
-    py_assign(py_retval(), &self->default_T);
-    return true;
-}
-
-static bool chunked_array2d_context_builder(int argc, py_Ref argv) {
-    PY_CHECK_ARGC(1);
-    c11_chunked_array2d* self = py_touserdata(argv);
-    py_assign(py_retval(), &self->context_builder);
-    return true;
-}
-
 static bool chunked_array2d__getitem__(int argc, py_Ref argv) {
     PY_CHECK_ARGC(2);
     PY_CHECK_ARG_TYPE(1, tp_vec2i);
     c11_chunked_array2d* self = py_touserdata(argv);
     c11_vec2i pos = py_tovec2i(&argv[1]);
     py_Ref res = c11_chunked_array2d__get(self, pos.x, pos.y);
+    if(res == NULL) return IndexError("(%d, %d) is out of bounds", pos.x, pos.y);
     py_assign(py_retval(), res);
     return true;
 }
@@ -1087,16 +1147,6 @@ static bool chunked_array2d__setitem__(int argc, py_Ref argv) {
     c11_vec2i pos = py_tovec2i(&argv[1]);
     bool ok = c11_chunked_array2d__set(self, pos.x, pos.y, &argv[2]);
     if(!ok) return false;
-    py_newnone(py_retval());
-    return true;
-}
-
-static bool chunked_array2d__delitem__(int argc, py_Ref argv) {
-    PY_CHECK_ARGC(2);
-    PY_CHECK_ARG_TYPE(1, tp_vec2i);
-    c11_chunked_array2d* self = py_touserdata(argv);
-    c11_vec2i pos = py_tovec2i(&argv[1]);
-    c11_chunked_array2d__del(self, pos.x, pos.y);
     py_newnone(py_retval());
     return true;
 }
@@ -1177,13 +1227,13 @@ static bool chunked_array2d_world_to_chunk(int argc, py_Ref argv) {
 }
 
 static bool chunked_array2d_add_chunk(int argc, py_Ref argv) {
-    PY_CHECK_ARGC(2);
+    PY_CHECK_ARGC(3);
     PY_CHECK_ARG_TYPE(1, tp_vec2i);
     c11_chunked_array2d* self = py_touserdata(argv);
     c11_vec2i pos = py_tovec2i(&argv[1]);
-    py_TValue* data = c11_chunked_array2d__new_chunk(self, pos);
+    py_TValue* data = c11_chunked_array2d__new_chunk(self, pos, &argv[2]);
     if(data == NULL) return false;
-    py_assign(py_retval(), &data[0]);  // context
+    py_newnone(py_retval());
     return true;
 }
 
@@ -1232,7 +1282,7 @@ static bool chunked_array2d_get_context(int argc, py_Ref argv) {
     c11_vec2i pos = py_tovec2i(&argv[1]);
     py_TValue* data = c11_chunked_array2d_chunks__get(&self->chunks, pos, NULL);
     if(data == NULL) {
-        py_newnone(py_retval());
+        return IndexError("no chunk found at (%d, %d)", pos.x, pos.y);
     } else {
         py_assign(py_retval(), &data[0]);
     }
@@ -1247,7 +1297,6 @@ void c11_chunked_array2d__dtor(c11_chunked_array2d* self) {
 void c11_chunked_array2d__mark(void* ud, c11_vector* p_stack) {
     c11_chunked_array2d* self = ud;
     pk__mark_value(&self->default_T);
-    pk__mark_value(&self->context_builder);
     int chunk_numel = self->chunk_size * self->chunk_size + 1;
     for(int i = 0; i < self->chunks.length; i++) {
         py_TValue* data = c11__getitem(c11_chunked_array2d_chunks_KV, &self->chunks, i).value;
@@ -1327,16 +1376,13 @@ static void register_chunked_array2d(py_Ref mod) {
     assert(type == tp_chunked_array2d);
 
     py_bind(py_tpobject(type),
-            "__new__(cls, chunk_size, default=None, context_builder=None)",
+            "__new__(cls, chunk_size, default=None, auto_add_chunk=True)",
             chunked_array2d__new__);
 
     py_bindproperty(type, "chunk_size", chunked_array2d_chunk_size, NULL);
-    py_bindproperty(type, "default", chunked_array2d_default, NULL);
-    py_bindproperty(type, "context_builder", chunked_array2d_context_builder, NULL);
 
     py_bindmagic(type, __getitem__, chunked_array2d__getitem__);
     py_bindmagic(type, __setitem__, chunked_array2d__setitem__);
-    py_bindmagic(type, __delitem__, chunked_array2d__delitem__);
     py_bindmagic(type, __iter__, chunked_array2d__iter__);
     py_bindmagic(type, __len__, chunked_array2d__len__);
 

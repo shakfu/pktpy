@@ -60,6 +60,7 @@ typedef struct Expr {
 typedef struct Ctx {
     CodeObject* co;  // 1 CodeEmitContext <=> 1 CodeObject*
     FuncDecl* func;  // optional, weakref
+    py_Name n_self;
     int level;
     int curr_iblock;
     bool is_compiling_class;
@@ -70,14 +71,14 @@ typedef struct Ctx {
 
 typedef struct Expr Expr;
 
-static void Ctx__ctor(Ctx* self, CodeObject* co, FuncDecl* func, int level);
+static void Ctx__ctor(Ctx* self, CodeObject* co, FuncDecl* func, int level, py_Name n_self);
 static void Ctx__dtor(Ctx* self);
 static int Ctx__prepare_loop_divert(Ctx* self, int line, bool is_break);
 static int Ctx__enter_block(Ctx* self, CodeBlockType type);
 static void Ctx__exit_block(Ctx* self);
 static int Ctx__emit_(Ctx* self, Opcode opcode, uint16_t arg, int line);
-// static void Ctx__revert_last_emit_(Ctx* self);
 static int Ctx__emit_int(Ctx* self, int64_t value, int line);
+static int Ctx__emit_name(Ctx* self, py_Name name, int line);
 static void Ctx__patch_jump(Ctx* self, int index);
 static void Ctx__emit_jump(Ctx* self, int target, int line);
 static int Ctx__add_varname(Ctx* self, py_Name name);
@@ -717,6 +718,36 @@ GroupedExpr* GroupedExpr__new(int line, Expr* child) {
     return self;
 }
 
+// NamedExpr: walrus operator (x := expr)
+typedef struct NamedExpr {
+    EXPR_COMMON_HEADER
+    NameExpr* name;
+    Expr* rhs;
+} NamedExpr;
+
+static void NamedExpr__dtor(Expr* self_) {
+    NamedExpr* self = (NamedExpr*)self_;
+    vtdelete((Expr*)self->name);
+    vtdelete(self->rhs);
+}
+
+static void NamedExpr__emit_(Expr* self_, Ctx* ctx) {
+    NamedExpr* self = (NamedExpr*)self_;
+    vtemit_(self->rhs, ctx);                            // [value]
+    Ctx__emit_(ctx, OP_DUP_TOP, BC_NOARG, self->line);  // [value, value]
+    vtemit_store((Expr*)self->name, ctx);               // [value]
+}
+
+static NamedExpr* NamedExpr__new(int line, NameExpr* name, Expr* rhs) {
+    const static ExprVt Vt = {.dtor = NamedExpr__dtor, .emit_ = NamedExpr__emit_};
+    NamedExpr* self = PK_MALLOC(sizeof(NamedExpr));
+    self->vt = &Vt;
+    self->line = line;
+    self->name = name;
+    self->rhs = rhs;
+    return self;
+}
+
 typedef struct BinaryExpr {
     EXPR_COMMON_HEADER
     Expr* lhs;
@@ -967,8 +998,23 @@ void AttribExpr__dtor(Expr* self_) {
     vtdelete(self->child);
 }
 
+static bool is_self_xxx(Expr* child, Ctx* ctx) {
+    if(child->vt->is_name) {
+        NameExpr* ne = (NameExpr*)child;
+        if(ne->scope == NAME_LOCAL && ne->name == ctx->n_self) {
+            int index = c11_smallmap_n2d__get(&ctx->co->varnames_inv, ne->name, -1);
+            if(index == 0) return true;
+        }
+    }
+    return false;
+}
+
 void AttribExpr__emit_(Expr* self_, Ctx* ctx) {
     AttribExpr* self = (AttribExpr*)self_;
+    if(is_self_xxx(self->child, ctx)) {
+        Ctx__emit_(ctx, OP_LOAD_SELF_ATTR, Ctx__add_name(ctx, self->name), self->line);
+        return;
+    }
     vtemit_(self->child, ctx);
     Ctx__emit_(ctx, OP_LOAD_ATTR, Ctx__add_name(ctx, self->name), self->line);
 }
@@ -982,6 +1028,10 @@ bool AttribExpr__emit_del(Expr* self_, Ctx* ctx) {
 
 bool AttribExpr__emit_store(Expr* self_, Ctx* ctx) {
     AttribExpr* self = (AttribExpr*)self_;
+    if(is_self_xxx(self->child, ctx)) {
+        Ctx__emit_(ctx, OP_STORE_SELF_ATTR, Ctx__add_name(ctx, self->name), self->line);
+        return true;
+    }
     vtemit_(self->child, ctx);
     Ctx__emit_(ctx, OP_STORE_ATTR, Ctx__add_name(ctx, self->name), self->line);
     return true;
@@ -1071,7 +1121,12 @@ void CallExpr__emit_(Expr* self_, Ctx* ctx) {
 
     c11__foreach(Expr*, &self->args, e) { vtemit_(*e, ctx); }
     c11__foreach(CallExprKwArg, &self->kwargs, e) {
-        Ctx__emit_int(ctx, (uintptr_t)e->key, self->line);
+        if(e->key == 0) {
+            // special key for **kwargs
+            Ctx__emit_int(ctx, 0, self->line);
+        } else {
+            Ctx__emit_name(ctx, e->key, self->line);
+        }
         vtemit_(e->val, ctx);
     }
     int KWARGC = self->kwargs.length;
@@ -1092,9 +1147,10 @@ CallExpr* CallExpr__new(int line, Expr* callable) {
 }
 
 /* context.c */
-static void Ctx__ctor(Ctx* self, CodeObject* co, FuncDecl* func, int level) {
+static void Ctx__ctor(Ctx* self, CodeObject* co, FuncDecl* func, int level, py_Name n_self) {
     self->co = co;
     self->func = func;
+    self->n_self = n_self;
     self->level = level;
     self->curr_iblock = 0;
     self->is_compiling_class = false;
@@ -1177,7 +1233,7 @@ static void Ctx__s_emit_decorators(Ctx* self, int count) {
 }
 
 static int Ctx__emit_(Ctx* self, Opcode opcode, uint16_t arg, int line) {
-    Bytecode bc = {(uint8_t)opcode, arg};
+    Bytecode bc = {(uint16_t)opcode, arg};
     BytecodeEx bcx = {line, self->curr_iblock};
     c11_vector__push(Bytecode, &self->co->codes, bc);
     c11_vector__push(BytecodeEx, &self->co->codes_ex, bcx);
@@ -1187,11 +1243,6 @@ static int Ctx__emit_(Ctx* self, Opcode opcode, uint16_t arg, int line) {
     return i;
 }
 
-// static void Ctx__revert_last_emit_(Ctx* self) {
-//     c11_vector__pop(&self->co->codes);
-//     c11_vector__pop(&self->co->codes_ex);
-// }
-
 static int Ctx__emit_int(Ctx* self, int64_t value, int line) {
     if(INT16_MIN <= value && value <= INT16_MAX) {
         return Ctx__emit_(self, OP_LOAD_SMALL_INT, (uint16_t)value, line);
@@ -1200,6 +1251,12 @@ static int Ctx__emit_int(Ctx* self, int64_t value, int line) {
         py_newint(&tmp, value);
         return Ctx__emit_(self, OP_LOAD_CONST, Ctx__add_const(self, &tmp), line);
     }
+}
+
+static int Ctx__emit_name(Ctx* self, py_Name name, int line) {
+    int index = Ctx__add_name(self, name);
+    assert(index <= UINT16_MAX);
+    return Ctx__emit_(self, OP_LOAD_NAME_AS_INT, (uint16_t)index, line);
 }
 
 static void Ctx__patch_jump(Ctx* self, int index) {
@@ -1220,7 +1277,10 @@ static int Ctx__add_varname(Ctx* self, py_Name name) {
     return CodeObject__add_varname(self->co, name);
 }
 
-static int Ctx__add_name(Ctx* self, py_Name name) { return CodeObject__add_name(self->co, name); }
+static int Ctx__add_name(Ctx* self, py_Name name) {
+    assert(name != 0);
+    return CodeObject__add_name(self->co, name);
+}
 
 static int Ctx__add_const_string(Ctx* self, c11_sv key) {
     if(key.size > 100) {
@@ -1254,6 +1314,10 @@ static int Ctx__add_const(Ctx* self, py_Ref v) {
 }
 
 static void Ctx__emit_store_name(Ctx* self, NameScope scope, py_Name name, int line) {
+    if(name == py_name("_")) {
+        Ctx__emit_(self, OP_POP_TOP, BC_NOARG, line);
+        return;
+    }
     switch(scope) {
         case NAME_LOCAL: Ctx__emit_(self, OP_STORE_FAST, Ctx__add_varname(self, name), line); break;
         case NAME_GLOBAL: {
@@ -1318,6 +1382,7 @@ typedef struct Compiler {
 
     Token* tokens;
     int tokens_length;
+    py_Name n_self;
 
     int i;  // current token index
     c11_vector /*T=CodeEmitContext*/ contexts;
@@ -1327,18 +1392,14 @@ static void Compiler__ctor(Compiler* self, SourceData_ src, Token* tokens, int t
     self->src = src;
     self->tokens = tokens;
     self->tokens_length = tokens_length;
+    self->n_self = py_name("self");
     self->i = 0;
     c11_vector__ctor(&self->contexts, sizeof(Ctx));
 }
 
 static void Compiler__dtor(Compiler* self) {
     // free tokens
-    for(int i = 0; i < self->tokens_length; i++) {
-        if(self->tokens[i].value.index == TokenValue_STR) {
-            // PK_FREE internal string
-            c11_string__delete(self->tokens[i].value._str);
-        }
-    }
+    destruct_tokens(self->tokens, self->tokens_length);
     PK_FREE(self->tokens);
     // free contexts
     c11__foreach(Ctx, &self->contexts, ctx) Ctx__dtor(ctx);
@@ -1454,11 +1515,9 @@ static Error* EXPR_TUPLE_ALLOW_SLICE(Compiler* self, bool allow_slice) {
     // tuple expression     // (a, )
     int count = 1;
     do {
-        if(curr()->brackets_level) match_newlines();
         if(!is_expression(self, allow_slice)) break;
         check(parse_expression(self, PREC_LOWEST + 1, allow_slice));
         count += 1;
-        if(curr()->brackets_level) match_newlines();
     } while(match(TK_COMMA));
     // pop `count` expressions from the stack and merge them into a TupleExpr
     SequenceExpr* e = TupleExpr__new(prev()->line, count);
@@ -1499,7 +1558,7 @@ static Error* EXPR_VARS(Compiler* self) {
 static void push_global_context(Compiler* self, CodeObject* co) {
     co->start_line = self->i == 0 ? 1 : prev()->line;
     Ctx* ctx = c11_vector__emplace(&self->contexts);
-    Ctx__ctor(ctx, co, NULL, self->contexts.length);
+    Ctx__ctor(ctx, co, NULL, self->contexts.length, self->n_self);
 }
 
 static Error* pop_context(Compiler* self) {
@@ -1669,6 +1728,20 @@ static Error* exprAnd(Compiler* self) {
     return NULL;
 }
 
+static Error* exprWalrus(Compiler* self) {
+    Error* err;
+    int line = prev()->line;
+    // LHS is on the stack; verify it's a simple name
+    Expr* lhs = Ctx__s_top(ctx());
+    if(!lhs->vt->is_name) { return SyntaxError(self, "':=' target must be a simple name"); }
+    check(parse_expression(self, PREC_NAMED_EXPR + 1, false));
+    Expr* rhs = Ctx__s_popx(ctx());
+    NameExpr* name = (NameExpr*)Ctx__s_popx(ctx());
+    NamedExpr* e = NamedExpr__new(line, name, rhs);
+    Ctx__s_push(ctx(), (Expr*)e);
+    return NULL;
+}
+
 static Error* exprTernary(Compiler* self) {
     // [true_expr]
     Error* err;
@@ -1755,9 +1828,7 @@ static Error* exprGroup(Compiler* self) {
         Ctx__s_push(ctx(), (Expr*)TupleExpr__new(line, 0));
         return NULL;
     }
-    match_newlines();
     check(EXPR_TUPLE(self));  // () is just for change precedence
-    match_newlines();
     consume(TK_RPAREN);
     if(Ctx__s_top(ctx())->vt->is_tuple) return NULL;
     GroupedExpr* g = GroupedExpr__new(line, Ctx__s_popx(ctx()));
@@ -1800,7 +1871,6 @@ static Error* consume_comp(Compiler* self, Opcode op0, Opcode op1) {
     check(EXPR_VARS(self));  // [expr, vars]
     consume(TK_IN);
     check(parse_expression(self, PREC_TERNARY + 1, false));  // [expr, vars, iter]
-    match_newlines();
     if(match(TK_IF)) {
         check(parse_expression(self, PREC_TERNARY + 1, false));  // [expr, vars, iter, cond]
         has_cond = true;
@@ -1811,7 +1881,6 @@ static Error* consume_comp(Compiler* self, Opcode op0, Opcode op1) {
     ce->vars = Ctx__s_popx(ctx());
     ce->expr = Ctx__s_popx(ctx());
     Ctx__s_push(ctx(), (Expr*)ce);
-    match_newlines();
     return NULL;
 }
 
@@ -1820,17 +1889,14 @@ static Error* exprList(Compiler* self) {
     int line = prev()->line;
     int count = 0;
     do {
-        match_newlines();
         if(curr()->type == TK_RBRACKET) break;
         check(EXPR(self));
         count += 1;
-        match_newlines();
         if(count == 1 && match(TK_FOR)) {
             check(consume_comp(self, OP_BUILD_LIST, OP_LIST_APPEND));
             consume(TK_RBRACKET);
             return NULL;
         }
-        match_newlines();
     } while(match(TK_COMMA));
     consume(TK_RBRACKET);
     SequenceExpr* e = ListExpr__new(line, count);
@@ -1847,7 +1913,6 @@ static Error* exprMap(Compiler* self) {
     bool parsing_dict = false;  // {...} may be dict or set
     int count = 0;
     do {
-        match_newlines();
         if(curr()->type == TK_RBRACE) break;
         check(EXPR(self));  // [key]
         if(curr()->type == TK_COLON) { parsing_dict = true; }
@@ -1860,7 +1925,6 @@ static Error* exprMap(Compiler* self) {
             Ctx__s_push(ctx(), (Expr*)item);
         }
         count += 1;  // key-value pair count
-        match_newlines();
         if(count == 1 && match(TK_FOR)) {
             if(parsing_dict) {
                 check(consume_comp(self, OP_BUILD_DICT, OP_DICT_ADD));
@@ -1870,7 +1934,6 @@ static Error* exprMap(Compiler* self) {
             consume(TK_RBRACE);
             return NULL;
         }
-        match_newlines();
     } while(match(TK_COMMA));
     consume(TK_RBRACE);
 
@@ -1889,71 +1952,14 @@ static Error* exprMap(Compiler* self) {
 
 static Error* read_literal(Compiler* self, py_Ref out);
 
-static Error* exprCompileTimeCall(Compiler* self, py_ItemRef func, int line) {
-    Error* err;
-    py_push(func);
-    py_pushnil();
-
-    uint16_t argc = 0;
-    uint16_t kwargc = 0;
-    // copied from `exprCall`
-    do {
-        match_newlines();
-        if(curr()->type == TK_RPAREN) break;
-        if(curr()->type == TK_ID && next()->type == TK_ASSIGN) {
-            consume(TK_ID);
-            py_Name key = py_namev(Token__sv(prev()));
-            consume(TK_ASSIGN);
-            // k=v
-            py_pushname(key);
-            check(read_literal(self, py_pushtmp()));
-            kwargc += 1;
-        } else {
-            if(kwargc > 0) {
-                return SyntaxError(self, "positional argument follows keyword argument");
-            }
-            check(read_literal(self, py_pushtmp()));
-            argc += 1;
-        }
-        match_newlines();
-    } while(match(TK_COMMA));
-    consume(TK_RPAREN);
-
-    py_StackRef p0 = py_peek(0);
-    bool ok = py_vectorcall(argc, kwargc);
-    if(!ok) {
-        char* msg = py_formatexc();
-        py_clearexc(p0);
-        err = SyntaxError(self, "compile-time call error:\n%s", msg);
-        PK_FREE(msg);
-        return err;
-    }
-
-    // TODO: optimize string dedup
-    int index = Ctx__add_const(ctx(), py_retval());
-    Ctx__s_push(ctx(), (Expr*)LoadConstExpr__new(line, index));
-    return NULL;
-}
-
 static Error* exprCall(Compiler* self) {
     Error* err;
     Expr* callable = Ctx__s_popx(ctx());
     int line = prev()->line;
-    if(callable->vt->is_name) {
-        NameExpr* ne = (NameExpr*)callable;
-        py_ItemRef func = py_macroget(ne->name);
-        if(func != NULL) {
-            py_StackRef p0 = py_peek(0);
-            err = exprCompileTimeCall(self, func, line);
-            if(err != NULL) py_clearexc(p0);
-            return err;
-        }
-    }
 
     CallExpr* e = CallExpr__new(line, callable);
     Ctx__s_push(ctx(), (Expr*)e);  // push onto the stack in advance
     do {
-        match_newlines();
         if(curr()->type == TK_RPAREN) break;
         if(curr()->type == TK_ID && next()->type == TK_ASSIGN) {
             consume(TK_ID);
@@ -1979,7 +1985,6 @@ static Error* exprCall(Compiler* self) {
                 c11_vector__push(Expr*, &e->args, Ctx__s_popx(ctx()));
             }
         }
-        match_newlines();
     } while(match(TK_COMMA));
     consume(TK_RPAREN);
     return NULL;
@@ -2029,9 +2034,7 @@ static Error* exprSlice1(Compiler* self) {
 static Error* exprSubscr(Compiler* self) {
     Error* err;
     int line = prev()->line;
-    match_newlines();
     check(EXPR_TUPLE_ALLOW_SLICE(self, true));
-    match_newlines();
     consume(TK_RBRACKET);  // [lhs, rhs]
     SubscrExpr* e = SubscrExpr__new(line);
     e->rhs = Ctx__s_popx(ctx());  // [lhs]
@@ -2302,7 +2305,7 @@ static FuncDecl_ push_f_context(Compiler* self, c11_sv name, int* out_index) {
     *out_index = top_ctx->co->func_decls.length - 1;
     // push new context
     top_ctx = c11_vector__emplace(&self->contexts);
-    Ctx__ctor(top_ctx, &decl->code, decl, self->contexts.length);
+    Ctx__ctor(top_ctx, &decl->code, decl, self->contexts.length, self->n_self);
     return decl;
 }
 
@@ -2360,7 +2363,9 @@ static Error* _compile_f_args(Compiler* self, FuncDecl* decl, bool is_lambda) {
     int state = 0;  // 0 for args, 1 for *args, 2 for k=v, 3 for **kwargs
     Error* err;
     do {
-        if(!is_lambda) match_newlines();
+        // allow trailing comma
+        if(!is_lambda && curr()->type == TK_RPAREN) break;
+
         if(state >= 3) return SyntaxError(self, "**kwargs should be the last argument");
         if(match(TK_MUL)) {
             if(state < 1)
@@ -2399,7 +2404,6 @@ static Error* _compile_f_args(Compiler* self, FuncDecl* decl, bool is_lambda) {
                 break;
         }
     } while(match(TK_COMMA));
-    if(!is_lambda) match_newlines();
     return NULL;
 }
 
@@ -2408,8 +2412,14 @@ static Error* consume_pep695_py312(Compiler* self) {
     Error* err;
     if(match(TK_LBRACKET)) {
         do {
-            consume(TK_ID);
-            if(match(TK_COLON)) check(consume_type_hints(self));
+            if(match(TK_POW)) {
+                // **P
+                consume(TK_ID);
+            } else {
+                // T: int
+                consume(TK_ID);
+                if(match(TK_COLON)) check(consume_type_hints(self));
+            }
         } while(match(TK_COMMA));
         consume(TK_RBRACKET);
     }
@@ -2441,7 +2451,7 @@ static Error* compile_function(Compiler* self, int decorators) {
             py_TValue* consts = decl->code.consts.data;
             py_TValue* c = &consts[codes[0].arg];
             if(py_isstr(c)) {
-                decl->docstring = py_tostr(c);
+                decl->docstring = c11_strdup(py_tostr(c));
                 codes[0].op = OP_NO_OP;
                 codes[1].op = OP_NO_OP;
             }
@@ -2481,6 +2491,10 @@ static Error* compile_class(Compiler* self, int decorators) {
         if(is_expression(self, false)) {
             check(EXPR(self));
             has_base = true;  // [base]
+        }
+        while(match(TK_COMMA)) {
+            // ignore extra bases
+            check(consume_type_hints(self));
         }
         consume(TK_RPAREN);
     }
@@ -2523,17 +2537,52 @@ static Error* compile_decorated(Compiler* self) {
 
 // import a [as b]
 // import a [as b], c [as d]
-static Error* compile_normal_import(Compiler* self) {
+static Error* compile_normal_import(Compiler* self, c11_sbuf* buf) {
     do {
         consume(TK_ID);
         c11_sv name = Token__sv(prev());
-        int index = Ctx__add_const_string(ctx(), name);
-        Ctx__emit_(ctx(), OP_IMPORT_PATH, index, prev()->line);
-        if(match(TK_AS)) {
+        c11_sbuf__write_sv(buf, name);
+        bool has_sub_cpnt = false;
+
+        while(match(TK_DOT)) {
+            has_sub_cpnt = true;
             consume(TK_ID);
-            name = Token__sv(prev());
+            c11_sbuf__write_char(buf, '.');
+            c11_sbuf__write_sv(buf, Token__sv(prev()));
         }
-        Ctx__emit_store_name(ctx(), name_scope(self), py_namev(name), prev()->line);
+
+        c11_string* path = c11_sbuf__submit(buf);
+        c11_sbuf__ctor(buf);
+        
+        int path_index = Ctx__add_const_string(ctx(), c11_string__sv(path));
+        c11_string__delete(path);
+
+        NameScope scope = name_scope(self);
+
+        Ctx__emit_(ctx(), OP_IMPORT_PATH, path_index, prev()->line);
+        // [module <path>]
+
+        if(!has_sub_cpnt) {
+            if(match(TK_AS)) {
+                // import a as x
+                consume(TK_ID);
+                name = Token__sv(prev());
+            } else {
+                // import a
+            }
+        } else {
+            if(match(TK_AS)) {
+                // import a.b as x
+                consume(TK_ID);
+                name = Token__sv(prev());
+            } else {
+                // import a.b
+                Ctx__emit_(ctx(), OP_POP_TOP, BC_NOARG, BC_KEEPLINE);
+                int index = Ctx__add_const_string(ctx(), name);
+                Ctx__emit_(ctx(), OP_IMPORT_PATH, index, BC_KEEPLINE);
+            }
+        }
+        Ctx__emit_store_name(ctx(), scope, py_namev(name), BC_KEEPLINE);
     } while(match(TK_COMMA));
     consume_end_stmt();
     return NULL;
@@ -2546,7 +2595,7 @@ static Error* compile_normal_import(Compiler* self) {
 // from ..a import b [as c]
 // from .a.b import c [as d]
 // from xxx import *
-static Error* compile_from_import(c11_sbuf* buf, Compiler* self) {
+static Error* compile_from_import(Compiler* self, c11_sbuf* buf) {
     int dots = 0;
 
     while(true) {
@@ -2603,7 +2652,6 @@ __EAT_DOTS_END:
 
     bool has_bracket = match(TK_LPAREN);
     do {
-        if(has_bracket) match_newlines();
         Ctx__emit_(ctx(), OP_DUP_TOP, BC_NOARG, BC_KEEPLINE);
         consume(TK_ID);
         c11_sv name = Token__sv(prev());
@@ -2614,10 +2662,7 @@ __EAT_DOTS_END:
         }
         Ctx__emit_store_name(ctx(), name_scope(self), py_namev(name), prev()->line);
     } while(match(TK_COMMA));
-    if(has_bracket) {
-        match_newlines();
-        consume(TK_RPAREN);
-    }
+    if(has_bracket) { consume(TK_RPAREN); }
     Ctx__emit_(ctx(), OP_POP_TOP, BC_NOARG, BC_KEEPLINE);
     consume_end_stmt();
     return NULL;
@@ -2760,11 +2805,18 @@ static Error* compile_stmt(Compiler* self) {
         }
         case TK_WHILE: check(compile_while_loop(self)); break;
         case TK_FOR: check(compile_for_loop(self)); break;
-        case TK_IMPORT: check(compile_normal_import(self)); break;
+        case TK_IMPORT: {
+            c11_sbuf buf;
+            c11_sbuf__ctor(&buf);
+            err = compile_normal_import(self, &buf);
+            c11_sbuf__dtor(&buf);
+            if(err) return err;
+            break;
+        }
         case TK_FROM: {
             c11_sbuf buf;
             c11_sbuf__ctor(&buf);
-            err = compile_from_import(&buf, self);
+            err = compile_from_import(self, &buf);
             c11_sbuf__dtor(&buf);
             if(err) return err;
             break;
@@ -2999,6 +3051,7 @@ const static PrattRule rules[TK__COUNT__] = {
     [TK_AND_KW ] =     { NULL,          exprAnd,            PREC_LOGICAL_AND   },
     [TK_OR_KW] =       { NULL,          exprOr,             PREC_LOGICAL_OR    },
     [TK_NOT_KW] =      { exprNot,       NULL,               PREC_LOGICAL_NOT   },
+    [TK_WALRUS] =      { NULL,          exprWalrus,         PREC_NAMED_EXPR    },
     [TK_TRUE] =        { exprLiteral0 },
     [TK_FALSE] =       { exprLiteral0 },
     [TK_NONE] =        { exprLiteral0 },

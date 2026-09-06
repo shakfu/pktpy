@@ -167,8 +167,26 @@ static bool list__setitem__(int argc, py_Ref argv) {
 
 static bool list__delitem__(int argc, py_Ref argv) {
     PY_CHECK_ARGC(2);
-    PY_CHECK_ARG_TYPE(1, tp_int);
     List* self = py_touserdata(py_arg(0));
+
+    if(py_istype(py_arg(1), tp_slice)) {
+        int start, stop, step;
+        bool ok = pk__parse_int_slice(py_arg(1), self->length, &start, &stop, &step);
+        if(!ok) return false;
+        if(step != 1) return ValueError("slice step must be 1 for deletion");
+        int n = stop - start;
+        if(n > 0) {
+            py_TValue* p = self->data;
+            for(int i = stop; i < self->length; i++) {
+                p[start + i - stop] = p[i];
+            }
+            self->length -= n;
+        }
+        py_newnone(py_retval());
+        return true;
+    }
+
+    PY_CHECK_ARG_TYPE(1, tp_int);
     int index = py_toint(py_arg(1));
     if(!pk__normalize_index(&index, self->length)) return false;
     c11_vector__erase(py_TValue, self, index);
@@ -185,8 +203,8 @@ static bool list__add__(int argc, py_Ref argv) {
         List* list_1 = py_touserdata(_1);
         py_newlist(py_retval());
         List* list = py_touserdata(py_retval());
-        c11_vector__extend(py_TValue, list, list_0->data, list_0->length);
-        c11_vector__extend(py_TValue, list, list_1->data, list_1->length);
+        c11_vector__extend(list, list_0->data, list_0->length);
+        c11_vector__extend(list, list_1->data, list_1->length);
     } else {
         py_newnotimplemented(py_retval());
     }
@@ -203,7 +221,7 @@ static bool list__mul__(int argc, py_Ref argv) {
         List* list = py_touserdata(py_retval());
         List* list_0 = py_touserdata(_0);
         for(int i = 0; i < n; i++) {
-            c11_vector__extend(py_TValue, list, list_0->data, list_0->length);
+            c11_vector__extend(list, list_0->data, list_0->length);
         }
     } else {
         py_newnotimplemented(py_retval());
@@ -245,8 +263,22 @@ static bool list_extend(int argc, py_Ref argv) {
     List* self = py_touserdata(py_arg(0));
     py_TValue* p;
     int length = pk_arrayview(py_arg(1), &p);
-    if(length == -1) return TypeError("extend() argument must be a list or tuple");
-    c11_vector__extend(py_TValue, self, p, length);
+    if(length >= 0) {
+        c11_vector__extend(self, p, length);
+    } else {
+        // get iterator
+        if (!py_iter(py_arg(1))) return false;
+        py_StackRef tmp_iter = py_pushtmp();
+        py_assign(tmp_iter, py_retval());
+        while(true) {
+            int res = py_next(tmp_iter);
+            if (res == 0) break;
+            if (res == -1) return false;
+            assert(res == 1);
+            c11_vector__push(py_TValue, self, *py_retval());
+        }
+        py_pop();
+    }
     py_newnone(py_retval());
     return true;
 }
@@ -275,7 +307,7 @@ static bool list_copy(int argc, py_Ref argv) {
     py_newlist(py_retval());
     List* self = py_touserdata(py_arg(0));
     List* list = py_touserdata(py_retval());
-    c11_vector__extend(py_TValue, list, self->data, self->length);
+    c11_vector__extend(list, self->data, self->length);
     return true;
 }
 
@@ -285,6 +317,8 @@ static bool list_index(int argc, py_Ref argv) {
     if(argc == 3) {
         PY_CHECK_ARG_TYPE(2, tp_int);
         start = py_toint(py_arg(2));
+        if(start < 0) start += py_list_len(py_arg(0));
+        if(start < 0) start = 0;
     }
     for(int i = start; i < py_list_len(py_arg(0)); i++) {
         int res = py_equal(py_list_getitem(py_arg(0), i), py_arg(1));
@@ -350,7 +384,10 @@ static bool list_insert(int argc, py_Ref argv) {
     return true;
 }
 
-static int lt_with_key(py_TValue* a, py_TValue* b, py_TValue* key) {
+static int lt_with_key(const void* a_, const void* b_, void* extra) {
+    py_TValue* a = (py_TValue*)a_;
+    py_TValue* b = (py_TValue*)b_;
+    py_TValue* key = (py_TValue*)extra;
     if(!key) return py_less(a, b);
     VM* vm = pk_current_vm;
     // project a
@@ -382,7 +419,7 @@ static bool list_sort(int argc, py_Ref argv) {
     bool ok = c11__stable_sort(self->data,
                                self->length,
                                sizeof(py_TValue),
-                               (int (*)(const void*, const void*, void*))lt_with_key,
+                               lt_with_key,
                                key);
     if(!ok) return false;
 

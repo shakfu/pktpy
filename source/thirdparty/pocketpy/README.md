@@ -36,6 +36,7 @@ Please see https://pocketpy.dev for details and try the following resources.
 + [Godot Extension](https://github.com/pocketpy/godot-pocketpy): Use pocketpy in Godot Engine
 + [VSCode Extension](https://marketplace.visualstudio.com/items?itemName=pocketpy.pocketpy): Debug and profile pocketpy scripts in VSCode
 + [Flutter Plugin](https://pub.dev/packages/pocketpy): Use pocketpy in Flutter apps
++ [Raylib Bindings](https://github.com/pocketpy/raylib-bindings): Use raylib with pocketpy
 
 ## Supported Platforms
 
@@ -49,17 +50,15 @@ These platforms are officially tested.
 + iOS 64-bit
 + Emscripten 32-bit
 + Raspberry Pi OS 64-bit
++ [Luckfox Pico SDK](https://github.com/LuckfoxTECH/luckfox-pico) 32-bit
+
+On Windows platform, only MSVC compiler is officially supported.
 
 ## Quick Start
 
 You have two options to integrate pkpy into your project.
 
-#### Use the single header file
-
-Download the `pocketpy.h` and `pocketpy.c` on our [GitHub Release](https://github.com/pocketpy/pocketpy/releases) page.
-And `#include` it in your project.
-
-#### Use CMake
+#### Use CMake (Recommended)
 
 Clone the whole repository as a submodule into your project,
 In your CMakelists.txt, add the following lines:
@@ -72,6 +71,11 @@ target_link_libraries(<your_target> pocketpy)
 See [CMakeLists.txt](https://github.com/pocketpy/pocketpy/blob/main/CMakeLists.txt) for details.
 
 It is safe to use `main` branch in production if CI badge is green.
+
+#### Use the single header file
+
+Download the `pocketpy.h` and `pocketpy.c` on our [GitHub Release](https://github.com/pocketpy/pocketpy/releases) page.
+And `#include` it in your project.
 
 ### Compile Flags
 
@@ -108,7 +112,7 @@ int main() {
     if(!ok) goto __ERROR;
 
     // Create a list: [1, 2, 3]
-    py_Ref r0 = py_getreg(0);
+    py_Ref r0 = py_tmpr0();
     py_newlistn(r0, 3);
     py_newint(py_list_getitem(r0, 0), 1);
     py_newint(py_list_getitem(r0, 1), 2);
@@ -191,18 +195,19 @@ And these are the results of the primes benchmark on Intel i5-12400F, WSL (Ubunt
 
 |                                                                 | Description                                                              |
 |-----------------------------------------------------------------|--------------------------------------------------------------------------|
+| [Tesselmax.EM](https://fdtd.io) | Distributed electromagnetic field simulator for silicon photonics and RF/interconnect design.            |
 | [godot-pocketpy](https://github.com/pocketpy/godot-pocketpy)    | Godot extension for using pocketpy in Godot Engine.                      |
 | [TIC-80](https://github.com/nesbox/TIC-80)                      | TIC-80 is a fantasy computer for making, playing and sharing tiny games. |
 | [py-js](https://github.com/shakfu/py-js)                        | Python3 externals for Max / MSP.                                         |
 | [crescent](https://github.com/chukobyte/crescent)               | Crescent is a cross-platform 2D fighting and beat-em-up game engine.     |
-| [orxpy](https://github.com/hcarty/orx)                          | Python extension for orx engine.                                         |
+| [orxpy](https://github.com/orx/orx)                             | Python extension for orx engine.                                         |
 | [CANopenTerm](https://canopenterm.de/python-api)                | Open-source software tool for CANopen CC networks and devices.           |
 
 Submit a pull request to add your project here.
 
 ## Contribution
 
-All kinds of contributions are welcome.
+All kinds of contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, build, testing, and PR guidance.
 
 - Submit a Pull Request
   - fix a bug
@@ -211,7 +216,7 @@ All kinds of contributions are welcome.
   - any suggestions
   - any questions
 
-If you find pkpy useful, consider star this repository (●'◡'●)
+If you find pkpy useful, consider star this repository.
 
 ## Sponsor this project
 
@@ -221,6 +226,17 @@ You can sponsor this project via these ways.
 + [Buy me a coffee](https://www.buymeacoffee.com/blueloveth)
 
 Your sponsorship will help us develop pkpy continuously.
+
+## Premium supporter
+
+Special thanks to our premium supporter, Tesselmax, for sponsoring the development of pocketpy.
+
+Tesselmax builds Tesselmax.EM, a distributed electromagnetic field simulator for silicon
+photonics and RF/interconnect design (FDTD, FDFD, and mode solving across GPU clusters).
+Tesselmax embeds pocketpy as the scripting engine in our simulation console, so user scripts drive
+geometry, materials, sources, and post-processing.
+
+Website: [https://fdtd.io](https://fdtd.io)
 
 ## Reference
 
@@ -235,7 +251,7 @@ Your sponsorship will help us develop pkpy continuously.
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=pocketpy/pocketpy&type=Date)](https://www.star-history.com/#pocketpy/pocketpy&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=pocketpy/pocketpy&type=Date)](https://star-history.dera.page/#pocketpy/pocketpy&Date)
 
 
 ## License

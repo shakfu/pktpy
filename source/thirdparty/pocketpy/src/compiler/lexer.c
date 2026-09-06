@@ -189,7 +189,8 @@ static Error* LexerError(Lexer* self, const char* fmt, ...) {
     err->src = self->src;
     PK_INCREF(self->src);
     err->lineno = self->current_line;
-    if(*self->curr_char == '\n') { err->lineno--; }
+    const char* p_end = self->src->source->data + self->src->source->size;
+    if(self->curr_char <= p_end && *self->curr_char == '\n') { err->lineno--; }
     va_list args;
     va_start(args, fmt);
     vsnprintf(err->msg, sizeof(err->msg), fmt, args);
@@ -281,9 +282,16 @@ static Error* _eat_string(Lexer* self, c11_sbuf* buff, char quote, enum StringTy
                 case 'b': c11_sbuf__write_char(buff, '\b'); break;
                 case 'f': c11_sbuf__write_char(buff, '\f'); break;
                 case 'v': c11_sbuf__write_char(buff, '\v'); break;
-                // Special case for the often used \0 while we don't have full support for octal literals.
+                // Special case for the often used \0 while we don't have full support for octal
+                // literals.
                 case '0': c11_sbuf__write_char(buff, '\0'); break;
                 case 'x': {
+                    // check there are at least 2 chars can read
+                    const char* p_end = self->src->source->data + self->src->source->size;
+                    if(p_end - self->curr_char < 2) {
+                        return LexerError(self, "invalid hex escape");
+                    }
+
                     char hex[3] = {eatchar(self), eatchar(self), '\0'};
                     int code;
                     if(sscanf(hex, "%x", &code) != 1 || code > 0xFF) {
@@ -469,7 +477,11 @@ static Error* lex_one_token(Lexer* self, bool* eof, bool is_fstring) {
                     // BUG: f"{stack[2:]}"
                     return eat_fstring_spec(self, eof);
                 }
-                add_token(self, TK_COLON);
+                if(matchchar(self, '=')) {
+                    add_token(self, TK_WALRUS);
+                } else {
+                    add_token(self, TK_COLON);
+                }
                 return NULL;
             }
             case ';': add_token(self, TK_SEMICOLON); return NULL;
@@ -565,6 +577,7 @@ static Error* lex_one_token(Lexer* self, bool* eof, bool is_fstring) {
             case ' ':
             case '\t': eat_spaces(self); break;
             case '\n': {
+                if(self->brackets_level > 0) return NULL;
                 add_token(self, TK_EOL);
                 if(!eat_indentation(self)) {
                     return LexerError(self, "unindent does not match any outer indentation level");
@@ -615,6 +628,7 @@ Error* Lexer__process(SourceData_ src, Token** out_tokens, int* out_length) {
     while(!eof) {
         void* err = lex_one_token(&lexer, &eof, false);
         if(err) {
+            destruct_tokens(lexer.nexts.data, lexer.nexts.length);
             Lexer__dtor(&lexer);
             return err;
         }
@@ -624,6 +638,16 @@ Error* Lexer__process(SourceData_ src, Token** out_tokens, int* out_length) {
 
     Lexer__dtor(&lexer);
     return NULL;
+}
+
+void destruct_tokens(Token* tokens, int length) {
+    // free tokens
+    for(int i = 0; i < length; i++) {
+        if(tokens[i].value.index == TokenValue_STR) {
+            // PK_FREE internal string
+            c11_string__delete(tokens[i].value._str);
+        }
+    }
 }
 
 const char* TokenSymbols[] = {
@@ -693,6 +717,7 @@ const char* TokenSymbols[] = {
     ">=",
     "<=",
     "~",
+    ":=",
     /** KW_BEGIN **/
     // NOTE: These keywords should be sorted in ascending order!!
     "False",

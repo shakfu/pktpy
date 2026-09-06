@@ -3,10 +3,13 @@
 
 #include "pocketpy/common/sstream.h"
 #include "pocketpy/common/utils.h"
+#include "pocketpy/common/dmath.h"
 #include "pocketpy/interpreter/vm.h"
-#include <math.h>
 
-static bool isclose(float a, float b) { return fabs(a - b) < 1e-4; }
+static bool isclose(float a, float b) { return dmath_fabs(a - b) < 1e-4; }
+
+py_i64 cpy312__int_floordiv(py_i64 a, py_i64 b);
+py_i64 cpy312__int_mod(py_i64 a, py_i64 b);
 
 #define DEFINE_VEC_FIELD(name, T, Tc, field)                                                       \
     static bool name##__##field(int argc, py_Ref argv) {                                           \
@@ -75,6 +78,17 @@ void py_newvec3i(py_OutRef out, c11_vec3i v) {
 c11_vec3i py_tovec3i(py_Ref self) {
     assert(self->type == tp_vec3i);
     return self->_vec3i;
+}
+
+void py_newvec4i(py_OutRef out, c11_vec4i v) {
+    out->type = tp_vec4i;
+    out->is_ptr = false;
+    out->_vec4i = v;
+}
+
+c11_vec4i py_tovec4i(py_Ref self) {
+    assert(self->type == tp_vec4i);
+    return self->_vec4i;
 }
 
 c11_mat3x3* py_newmat3x3(py_OutRef out) {
@@ -193,7 +207,7 @@ static py_Ref _const(py_Type type, const char* name) {
         float sum = 0;                                                                             \
         for(int i = 0; i < D; i++)                                                                 \
             sum += v.data[i] * v.data[i];                                                          \
-        py_newfloat(py_retval(), sqrtf(sum));                                                      \
+        py_newfloat(py_retval(), dmath_sqrt(sum));                                                 \
         return true;                                                                               \
     }                                                                                              \
     static bool vec##D##_length_squared(int argc, py_Ref argv) {                                   \
@@ -223,7 +237,7 @@ static py_Ref _const(py_Type type, const char* name) {
         for(int i = 0; i < D; i++)                                                                 \
             len += self.data[i] * self.data[i];                                                    \
         if(isclose(len, 0)) return ZeroDivisionError("cannot normalize zero vector");              \
-        len = sqrtf(len);                                                                          \
+        len = dmath_sqrt(len);                                                                     \
         c11_vec##D res;                                                                            \
         for(int i = 0; i < D; i++)                                                                 \
             res.data[i] = self.data[i] / len;                                                      \
@@ -303,13 +317,49 @@ DEF_VECTOR_OPS(3)
         c11_vec##D##i a = py_tovec##D##i(&argv[0]);                                                \
         py_i64 b = py_toint(&argv[1]);                                                             \
         for(int i = 0; i < D; i++)                                                                 \
-            a.data[i] /= b;                                                                        \
+            a.data[i] = cpy312__int_floordiv(a.data[i], b);                                       \
+        py_newvec##D##i(py_retval(), a);                                                           \
+        return true;                                                                               \
+    }                                                                                              \
+    static bool vec##D##i##__mod__(int argc, py_Ref argv) {                                        \
+        PY_CHECK_ARGC(2);                                                                          \
+        PY_CHECK_ARG_TYPE(1, tp_int);                                                              \
+        c11_vec##D##i a = py_tovec##D##i(&argv[0]);                                                \
+        py_i64 b = py_toint(&argv[1]);                                                             \
+        for(int i = 0; i < D; i++)                                                                 \
+            a.data[i] = cpy312__int_mod(a.data[i], b);                                             \
         py_newvec##D##i(py_retval(), a);                                                           \
         return true;                                                                               \
     }
 
 DEF_VECTOR_INT_OPS(2)
 DEF_VECTOR_INT_OPS(3)
+DEF_VECTOR_INT_OPS(4)
+
+// vec2i l1_norm, l2_norm, max_norm
+static bool vec2i_l1_norm(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    c11_vec2i v = py_tovec2i(argv);
+    int norm = abs(v.x) + abs(v.y);
+    py_newint(py_retval(), norm);
+    return true;
+}
+
+static bool vec2i_l2_norm(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    c11_vec2i v = py_tovec2i(argv);
+    double norm = dmath_sqrt(v.x * v.x + v.y * v.y);
+    py_newfloat(py_retval(), norm);
+    return true;
+}
+
+static bool vec2i_max_norm(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    c11_vec2i v = py_tovec2i(argv);
+    int norm = c11__max(abs(v.x), abs(v.y));
+    py_newint(py_retval(), norm);
+    return true;
+}
 
 static bool vec2i__hash__(int argc, py_Ref argv) {
     PY_CHECK_ARGC(1);
@@ -332,6 +382,18 @@ static bool vec3i__hash__(int argc, py_Ref argv) {
     return true;
 }
 
+static bool vec4i__hash__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    c11_vec4i v = py_tovec4i(argv);
+    uint64_t x_part = (uint32_t)v.x & 0xFFFF;
+    uint64_t y_part = (uint32_t)v.y & 0xFFFF;
+    uint64_t z_part = (uint32_t)v.z & 0xFFFF;
+    uint64_t w_part = (uint32_t)v.w & 0xFFFF;
+    uint64_t hash = (x_part << 48) | (y_part << 32) | (z_part << 16) | w_part;
+    py_newint(py_retval(), (py_i64)hash);
+    return true;
+}
+
 static bool vec2__repr__(int argc, py_Ref argv) {
     PY_CHECK_ARGC(1);
     char buf[64];
@@ -344,8 +406,8 @@ static bool vec2_rotate(int argc, py_Ref argv) {
     PY_CHECK_ARGC(2);
     py_f64 radians;
     if(!py_castfloat(&argv[1], &radians)) return false;
-    float cr = cosf(radians);
-    float sr = sinf(radians);
+    double sr, cr;
+    dmath_sincos(radians, &sr, &cr);
     c11_vec2 res;
     res.x = argv[0]._vec2.x * cr - argv[0]._vec2.y * sr;
     res.y = argv[0]._vec2.x * sr + argv[0]._vec2.y * cr;
@@ -357,9 +419,10 @@ static bool vec2_angle_STATIC(int argc, py_Ref argv) {
     PY_CHECK_ARGC(2);
     PY_CHECK_ARG_TYPE(0, tp_vec2);
     PY_CHECK_ARG_TYPE(1, tp_vec2);
-    float val = atan2f(argv[1]._vec2.y, argv[1]._vec2.x) - atan2f(argv[0]._vec2.y, argv[0]._vec2.x);
-    if(val > PK_M_PI) val -= 2 * (float)PK_M_PI;
-    if(val < -PK_M_PI) val += 2 * (float)PK_M_PI;
+    float val = dmath_atan2(argv[1]._vec2.y, argv[1]._vec2.x) -
+                dmath_atan2(argv[0]._vec2.y, argv[0]._vec2.x);
+    if(val > DMATH_PI) val -= 2 * (float)DMATH_PI;
+    if(val < -DMATH_PI) val += 2 * (float)DMATH_PI;
     py_newfloat(py_retval(), val);
     return true;
 }
@@ -398,7 +461,7 @@ static bool vec2_smoothdamp_STATIC(int argc, py_Ref argv) {
     float maxChangeSq = maxChange * maxChange;
     float sqDist = change_x * change_x + change_y * change_y;
     if(sqDist > maxChangeSq) {
-        float mag = sqrtf(sqDist);
+        float mag = dmath_sqrt(sqDist);
         change_x = change_x / mag * maxChange;
         change_y = change_y / mag * maxChange;
     }
@@ -576,8 +639,8 @@ static bool inverse(const c11_mat3x3* m, c11_mat3x3* restrict out) {
 }
 
 static void trs(c11_vec2 t, float r, c11_vec2 s, c11_mat3x3* restrict out) {
-    float cr = cosf(r);
-    float sr = sinf(r);
+    double sr, cr;
+    dmath_sincos(r, &sr, &cr);
     // clang-format off
     *out = (c11_mat3x3){
         ._11 = s.x * cr, ._12 = -s.y * sr, ._13 = t.x,
@@ -733,7 +796,7 @@ static bool mat3x3_t(int argc, py_Ref argv) {
 static bool mat3x3_r(int argc, py_Ref argv) {
     PY_CHECK_ARGC(1);
     c11_mat3x3* ud = py_tomat3x3(argv);
-    float r = atan2f(ud->_21, ud->_11);
+    float r = dmath_atan2(ud->_21, ud->_11);
     py_newfloat(py_retval(), r);
     return true;
 }
@@ -742,8 +805,8 @@ static bool mat3x3_s(int argc, py_Ref argv) {
     PY_CHECK_ARGC(1);
     c11_mat3x3* ud = py_tomat3x3(argv);
     c11_vec2 res;
-    res.x = sqrtf(ud->_11 * ud->_11 + ud->_21 * ud->_21);
-    res.y = sqrtf(ud->_12 * ud->_12 + ud->_22 * ud->_22);
+    res.x = dmath_sqrt(ud->_11 * ud->_11 + ud->_21 * ud->_21);
+    res.y = dmath_sqrt(ud->_12 * ud->_12 + ud->_22 * ud->_22);
     py_newvec2(py_retval(), res);
     return true;
 }
@@ -798,6 +861,21 @@ static bool vec3i__repr__(int argc, py_Ref argv) {
 DEFINE_VEC_FIELD(vec3i, int, py_i64, x)
 DEFINE_VEC_FIELD(vec3i, int, py_i64, y)
 DEFINE_VEC_FIELD(vec3i, int, py_i64, z)
+
+/* vec4i */
+static bool vec4i__repr__(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    c11_vec4i data = py_tovec4i(argv);
+    char buf[64];
+    int size = snprintf(buf, 64, "vec4i(%d, %d, %d, %d)", data.x, data.y, data.z, data.w);
+    py_newstrv(py_retval(), (c11_sv){buf, size});
+    return true;
+}
+
+DEFINE_VEC_FIELD(vec4i, int, py_i64, x)
+DEFINE_VEC_FIELD(vec4i, int, py_i64, y)
+DEFINE_VEC_FIELD(vec4i, int, py_i64, z)
+DEFINE_VEC_FIELD(vec4i, int, py_i64, w)
 
 /* vec3 */
 static bool vec3__repr__(int argc, py_Ref argv) {
@@ -944,7 +1022,7 @@ static bool color32_to_hex(int argc, py_Ref argv) {
     return true;
 }
 
-static void c11_color32_premult(c11_color32* color) {
+void c11_color32_premult(c11_color32* color) {
     if(color->a == 255) return;
     float alpha = color->a / 255.0f;
     color->r = (unsigned char)(color->r * alpha);
@@ -973,6 +1051,18 @@ static bool color32_to_vec3i(int argc, py_Ref argv) {
     v.y = (int)color.g;
     v.z = (int)color.b;
     py_newvec3i(py_retval(), v);
+    return true;
+}
+
+static bool color32_to_rgb565(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    c11_color32 color = py_tocolor32(argv);
+    c11_color32_premult(&color);
+    uint16_t r = (color.r >> 3) & 0x1F;
+    uint16_t g = (color.g >> 2) & 0x3F;
+    uint16_t b = (color.b >> 3) & 0x1F;
+    uint16_t rgb565 = (r << 11) | (g << 5) | b;
+    py_newint(py_retval(), rgb565);
     return true;
 }
 
@@ -1101,6 +1191,7 @@ void pk__add_module_vmath() {
     py_Type vec3 = pk_newtype("vec3", tp_object, mod, NULL, false, true);
     py_Type vec2i = pk_newtype("vec2i", tp_object, mod, NULL, false, true);
     py_Type vec3i = pk_newtype("vec3i", tp_object, mod, NULL, false, true);
+    py_Type vec4i = pk_newtype("vec4i", tp_object, mod, NULL, false, true);
     py_Type mat3x3 = pk_newtype("mat3x3", tp_object, mod, NULL, false, true);
     py_Type color32 = pk_newtype("color32", tp_object, mod, NULL, false, true);
 
@@ -1108,15 +1199,17 @@ void pk__add_module_vmath() {
     py_setdict(mod, py_name("vec3"), py_tpobject(vec3));
     py_setdict(mod, py_name("vec2i"), py_tpobject(vec2i));
     py_setdict(mod, py_name("vec3i"), py_tpobject(vec3i));
+    py_setdict(mod, py_name("vec4i"), py_tpobject(vec4i));
     py_setdict(mod, py_name("mat3x3"), py_tpobject(mat3x3));
     py_setdict(mod, py_name("color32"), py_tpobject(color32));
 
-    assert(vec2 == tp_vec2);
-    assert(vec3 == tp_vec3);
-    assert(vec2i == tp_vec2i);
-    assert(vec3i == tp_vec3i);
-    assert(mat3x3 == tp_mat3x3);
-    assert(color32 == tp_color32);
+    c11__rtassert(vec2 == tp_vec2);
+    c11__rtassert(vec3 == tp_vec3);
+    c11__rtassert(vec2i == tp_vec2i);
+    c11__rtassert(vec3i == tp_vec3i);
+    c11__rtassert(vec4i == tp_vec4i);
+    c11__rtassert(mat3x3 == tp_mat3x3);
+    c11__rtassert(color32 == tp_color32);
 
     /* vec2 */
     py_bindmagic(vec2, __new__, vec2__new__);
@@ -1183,6 +1276,7 @@ void pk__add_module_vmath() {
     py_bindmagic(vec2i, __sub__, vec2i__sub__);
     py_bindmagic(vec2i, __mul__, vec2i__mul__);
     py_bindmagic(vec2i, __floordiv__, vec2i__floordiv__);
+    py_bindmagic(vec2i, __mod__, vec2i__mod__);
     py_bindmagic(vec2i, __eq__, vec2i__eq__);
     py_bindmagic(vec2i, __ne__, vec2i__ne__);
     py_bindmagic(vec2i, __hash__, vec2i__hash__);
@@ -1191,6 +1285,10 @@ void pk__add_module_vmath() {
     py_bindmethod(vec2i, "with_x", vec2i__with_x);
     py_bindmethod(vec2i, "with_y", vec2i__with_y);
     py_bindmethod(vec2i, "dot", vec2i_dot);
+    py_bindmethod(vec2i, "l1_norm", vec2i_l1_norm);
+    py_bindmethod(vec2i, "l2_norm", vec2i_l2_norm);
+    py_bindmethod(vec2i, "max_norm", vec2i_max_norm);
+    py_bindmethod(vec2i, "length", vec2i_l2_norm);
 
     // clang-format off
     py_newvec2i(_const(vec2i, "ZERO"), (c11_vec2i){{0, 0}});
@@ -1208,6 +1306,7 @@ void pk__add_module_vmath() {
     py_bindmagic(vec3i, __sub__, vec3i__sub__);
     py_bindmagic(vec3i, __mul__, vec3i__mul__);
     py_bindmagic(vec3i, __floordiv__, vec3i__floordiv__);
+    py_bindmagic(vec3i, __mod__, vec3i__mod__);
     py_bindmagic(vec3i, __eq__, vec3i__eq__);
     py_bindmagic(vec3i, __ne__, vec3i__ne__);
     py_bindmagic(vec3i, __hash__, vec3i__hash__);
@@ -1226,6 +1325,36 @@ void pk__add_module_vmath() {
     py_newvec3i(_const(vec3i, "ONE"),
                 (c11_vec3i){
                     {1, 1, 1}
+    });
+
+    /* vec4i */
+    py_bindmagic(vec4i, __new__, vec4i__new__);
+    py_bindmagic(vec4i, __repr__, vec4i__repr__);
+    py_bindmagic(vec4i, __add__, vec4i__add__);
+    py_bindmagic(vec4i, __sub__, vec4i__sub__);
+    py_bindmagic(vec4i, __mul__, vec4i__mul__);
+    py_bindmagic(vec4i, __floordiv__, vec4i__floordiv__);
+    py_bindmagic(vec4i, __mod__, vec4i__mod__);
+    py_bindmagic(vec4i, __eq__, vec4i__eq__);
+    py_bindmagic(vec4i, __ne__, vec4i__ne__);
+    py_bindmagic(vec4i, __hash__, vec4i__hash__);
+    py_bindproperty(vec4i, "x", vec4i__x, NULL);
+    py_bindproperty(vec4i, "y", vec4i__y, NULL);
+    py_bindproperty(vec4i, "z", vec4i__z, NULL);
+    py_bindproperty(vec4i, "w", vec4i__w, NULL);
+    py_bindmethod(vec4i, "with_x", vec4i__with_x);
+    py_bindmethod(vec4i, "with_y", vec4i__with_y);
+    py_bindmethod(vec4i, "with_z", vec4i__with_z);
+    py_bindmethod(vec4i, "with_w", vec4i__with_w);
+    py_bindmethod(vec4i, "dot", vec4i_dot);
+
+    py_newvec4i(_const(vec4i, "ZERO"),
+                (c11_vec4i){
+                    {0, 0, 0, 0}
+    });
+    py_newvec4i(_const(vec4i, "ONE"),
+                (c11_vec4i){
+                    {1, 1, 1, 1}
     });
 
     /* vec3 */
@@ -1279,6 +1408,7 @@ void pk__add_module_vmath() {
     py_bindmethod(color32, "to_hex", color32_to_hex);
     py_bindmethod(color32, "to_vec3", color32_to_vec3);
     py_bindmethod(color32, "to_vec3i", color32_to_vec3i);
+    py_bindmethod(color32, "to_rgb565", color32_to_rgb565);
     py_bindmethod(color32, "ansi_fg", color32_ansi_fg);
     py_bindmethod(color32, "ansi_bg", color32_ansi_bg);
     py_bindfunc(mod, "rgb", vmath_rgb);

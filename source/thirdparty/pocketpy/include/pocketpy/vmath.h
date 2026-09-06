@@ -13,6 +13,11 @@ typedef union c11_vec3i {
     int data[3];
 } c11_vec3i;
 
+typedef union c11_vec4i {
+    struct { int x, y, z, w; };
+    int data[4];
+} c11_vec4i;
+
 typedef union c11_vec2 {
     struct { float x, y; };
     float data[2];
@@ -42,4 +47,5 @@ typedef union c11_color32 {
         unsigned char a;
     };
     unsigned char data[4];
+    uint32_t u32;
 } c11_color32;

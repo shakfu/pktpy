@@ -12,7 +12,7 @@
 #include <stdbool.h>
 #include <assert.h>
 
-static char* pk_default_importfile(const char* path) {
+static char* pk_default_importfile(const char* path, int* data_size) {
 #if PK_ENABLE_OS
     FILE* f = fopen(path, "rb");
     if(f == NULL) return NULL;
@@ -23,6 +23,7 @@ static char* pk_default_importfile(const char* path) {
     size = fread(buffer, 1, size, f);
     buffer[size] = 0;
     fclose(f);
+    if(data_size) *data_size = (int)size;
     return buffer;
 #else
     return NULL;
@@ -98,9 +99,12 @@ void VM__ctor(VM* self) {
     self->recursion_depth = 0;
     self->max_recursion_depth = 1000;
 
+    memset(self->reg, 0, sizeof(self->reg));
+
     self->ctx = NULL;
     self->curr_class = NULL;
-    self->curr_decl_based_function = NULL;
+    self->curr_function = NULL;
+
     memset(&self->trace_info, 0, sizeof(TraceInfo));
     memset(&self->watchdog_info, 0, sizeof(WatchdogInfo));
     LineProfiler__ctor(&self->line_profiler);
@@ -112,7 +116,6 @@ void VM__ctor(VM* self) {
     self->stack.end = self->stack.begin + PK_VM_STACK_SIZE;
 
     CachedNames__ctor(&self->cached_names);
-    NameDict__ctor(&self->compile_time_funcs, PK_TYPE_ATTR_LOAD_FACTOR);
 
     /* Init Builtin Types */
     // 0: unused
@@ -153,6 +156,7 @@ void VM__ctor(VM* self) {
     validate(tp_BaseException, pk_BaseException__register());
     validate(tp_Exception, pk_Exception__register());
     validate(tp_bytes, pk_bytes__register());
+    validate(tp_bytes_iterator, pk_bytes_iterator__register());
     validate(tp_namedict, pk_namedict__register());
     validate(tp_locals, pk_newtype("locals", tp_object, NULL, NULL, false, true));
     validate(tp_code, pk_code__register());
@@ -191,6 +195,7 @@ void VM__ctor(VM* self) {
     INJECT_BUILTIN_EXC(SyntaxError, tp_Exception);
     INJECT_BUILTIN_EXC(RecursionError, tp_Exception);
     INJECT_BUILTIN_EXC(OSError, tp_Exception);
+    INJECT_BUILTIN_EXC(PermissionError, tp_Exception);
     INJECT_BUILTIN_EXC(NotImplementedError, tp_Exception);
     INJECT_BUILTIN_EXC(TypeError, tp_Exception);
     INJECT_BUILTIN_EXC(IndexError, tp_Exception);
@@ -237,9 +242,10 @@ void VM__ctor(VM* self) {
 
     py_newnotimplemented(py_emplacedict(self->builtins, py_name("NotImplemented")));
 
+    pk__add_module_stdc();
     pk__add_module_vmath();
     pk__add_module_array2d();
-    pk__add_module_colorcvt();
+    // pk__add_module_colorcvt();
 
     // add modules
     pk__add_module_os();
@@ -261,10 +267,12 @@ void VM__ctor(VM* self) {
     pk__add_module_unicodedata();
 
     pk__add_module_conio();
-    pk__add_module_lz4();       // optional
-    pk__add_module_libhv();     // optional
-    pk__add_module_cute_png();  // optional
+    pk__add_module_lz4();        // optional
+    pk__add_module_cute_png();   // optional
+    pk__add_module_msgpack();    // optional
+    py__add_module_periphery();  // optional
     pk__add_module_pkpy();
+    pk__add_module_picoterm();
 
     // add python builtins
     do {
@@ -278,9 +286,19 @@ void VM__ctor(VM* self) {
     } while(0);
 
     self->main = py_newmodule("__main__");
+
+    if(py_appcallbacks()->on_vm_ctor) {
+        int index = VM__index(self);
+        py_appcallbacks()->on_vm_ctor(index);
+    }
 }
 
 void VM__dtor(VM* self) {
+    if(py_appcallbacks()->on_vm_dtor) {
+        int index = VM__index(self);
+        py_appcallbacks()->on_vm_dtor(index);
+    }
+
     // reset traceinfo
     py_sys_settrace(NULL, true);
     LineProfiler__dtor(&self->line_profiler);
@@ -293,7 +311,6 @@ void VM__dtor(VM* self) {
     BinTree__dtor(&self->modules);
     FixedMemoryPool__dtor(&self->pool_frame);
     CachedNames__dtor(&self->cached_names);
-    NameDict__dtor(&self->compile_time_funcs);
     c11_vector__dtor(&self->types);
 }
 
@@ -468,8 +485,8 @@ FrameResult VM__vectorcall(VM* self, uint16_t argc, uint16_t kwargc, bool opcall
     }
 #endif
 
-    py_Ref p1 = self->stack.sp - kwargc * 2;
-    py_Ref p0 = p1 - argc - 2;
+    py_StackRef p1 = self->stack.sp - kwargc * 2;
+    py_StackRef p0 = p1 - argc - 2;
     // [callable, <self>, args..., kwargs...]
     //      ^p0                    ^p1      ^_sp
 
@@ -482,7 +499,8 @@ FrameResult VM__vectorcall(VM* self, uint16_t argc, uint16_t kwargc, bool opcall
         // [unbound, self, args..., kwargs...]
     }
 
-    py_Ref argv = p0 + 1 + (int)py_isnil(p0 + 1);
+    py_StackRef argv = p0 + 1 + (int)py_isnil(p0 + 1);
+    self->curr_function = p0;  // set current function for inspection
 
     if(p0->type == tp_function) {
         Function* fn = py_touserdata(p0);
@@ -498,14 +516,12 @@ FrameResult VM__vectorcall(VM* self, uint16_t argc, uint16_t kwargc, bool opcall
                 // submit the call
                 if(!fn->cfunc) {
                     // python function
-                    VM__push_frame(self, Frame__new(co, p0, fn->module, fn->globals, argv, false));
+                    VM__push_frame(self, Frame__new(co, p0, fn->module, &fn->globals, argv, false));
                     return opcall ? RES_CALL : VM__run_top_frame(self);
                 } else {
                     // decl-based binding
-                    self->curr_decl_based_function = p0;
                     bool ok = py_callcfunc(fn->cfunc, co->nlocals, argv);
                     self->stack.sp = p0;
-                    self->curr_decl_based_function = NULL;
                     return ok ? RES_RETURN : RES_ERROR;
                 }
             }
@@ -527,14 +543,12 @@ FrameResult VM__vectorcall(VM* self, uint16_t argc, uint16_t kwargc, bool opcall
                 // submit the call
                 if(!fn->cfunc) {
                     // python function
-                    VM__push_frame(self, Frame__new(co, p0, fn->module, fn->globals, argv, false));
+                    VM__push_frame(self, Frame__new(co, p0, fn->module, &fn->globals, argv, false));
                     return opcall ? RES_CALL : VM__run_top_frame(self);
                 } else {
                     // decl-based binding
-                    self->curr_decl_based_function = p0;
                     bool ok = py_callcfunc(fn->cfunc, co->nlocals, argv);
                     self->stack.sp = p0;
-                    self->curr_decl_based_function = NULL;
                     return ok ? RES_RETURN : RES_ERROR;
                 }
             case FuncType_GENERATOR: {
@@ -543,7 +557,7 @@ FrameResult VM__vectorcall(VM* self, uint16_t argc, uint16_t kwargc, bool opcall
                 // copy buffer back to stack
                 self->stack.sp = argv + co->nlocals;
                 memcpy(argv, self->vectorcall_buffer, co->nlocals * sizeof(py_TValue));
-                py_Frame* frame = Frame__new(co, p0, fn->module, fn->globals, argv, false);
+                py_Frame* frame = Frame__new(co, p0, fn->module, &fn->globals, argv, false);
                 pk_newgenerator(py_retval(), frame, p0, self->stack.sp);
                 self->stack.sp = p0;  // reset the stack
                 return RES_RETURN;
@@ -566,9 +580,11 @@ FrameResult VM__vectorcall(VM* self, uint16_t argc, uint16_t kwargc, bool opcall
     }
 
     if(p0->type == tp_type) {
+        py_Type p0_type = py_totype(p0);
         // [cls, NULL, args..., kwargs...]
-        py_Ref new_f = py_tpfindmagic(py_totype(p0), __new__);
+        py_Ref new_f = py_tpfindmagic(p0_type, __new__);
         assert(new_f && py_isnil(p0 + 1));
+        bool is_default_new = new_f->type == tp_nativefunc && new_f->_cfunc == pk__object_new;
 
         // prepare a copy of args and kwargs
         int span = self->stack.sp - argv;
@@ -584,14 +600,23 @@ FrameResult VM__vectorcall(VM* self, uint16_t argc, uint16_t kwargc, bool opcall
         // NOTE: previously we use `get_unbound_method` but here we just use `tpfindmagic`
         // >> [cls, NULL, args..., kwargs...]
         // >> py_retval() is the new instance
-        py_Ref init_f = py_tpfindmagic(py_totype(p0), __init__);
+        py_Ref init_f = py_tpfindmagic(p0_type, __init__);
         if(init_f) {
-            // do an inplace patch
-            *p0 = *init_f;              // __init__
-            p0[1] = self->last_retval;  // self
-            // [__init__, self, args..., kwargs...]
-            if(VM__vectorcall(self, argc, kwargc, false) == RES_ERROR) return RES_ERROR;
-            *py_retval() = p0[1];  // restore the new instance
+            if(py_isinstance(py_retval(), p0_type)) {
+                // do an inplace patch
+                *p0 = *init_f;              // __init__
+                p0[1] = self->last_retval;  // self
+                // [__init__, self, args..., kwargs...]
+                if(VM__vectorcall(self, argc, kwargc, false) == RES_ERROR) return RES_ERROR;
+                *py_retval() = p0[1];  // restore the new instance
+            }
+        } else {
+            if(is_default_new) {
+                if(argc != 0 || kwargc != 0) {
+                    TypeError("%t() takes no arguments", py_totype(p0));
+                    return RES_ERROR;
+                }
+            }
         }
         // reset the stack
         self->stack.sp = p0;
@@ -650,12 +675,6 @@ void ManagedHeap__mark(ManagedHeap* self) {
         CachedNames_KV* kv = c11_chunkedvector__at(&vm->cached_names.entries, i);
         pk__mark_value(&kv->val);
     }
-    // mark compile time functions
-    for(int i = 0; i < vm->compile_time_funcs.capacity; i++) {
-        NameDict_KV* kv = &vm->compile_time_funcs.items[i];
-        if(kv->key == NULL) continue;
-        pk__mark_value(&kv->value);
-    }
     // mark types
     int types_length = vm->types.length;
     // 0-th type is placeholder
@@ -674,6 +693,8 @@ void ManagedHeap__mark(ManagedHeap* self) {
     for(int i = 0; i < c11__count_array(vm->reg); i++) {
         pk__mark_value(&vm->reg[i]);
     }
+    // mark gc debug callback
+    pk__mark_value(&vm->heap.debug_callback);
     // mark user func
     if(vm->callbacks.gc_mark) vm->callbacks.gc_mark(pk__mark_value_func, p_stack);
     /*****************************/
@@ -681,7 +702,7 @@ void ManagedHeap__mark(ManagedHeap* self) {
         PyObject* obj = c11_vector__back(PyObject*, p_stack);
         c11_vector__pop(p_stack);
 
-        assert(obj->gc_marked);
+        assert(obj->gc_marked & 0b01);
 
         if(obj->slots > 0) {
             py_TValue* p = PyObject__slots(obj);
@@ -696,53 +717,62 @@ void ManagedHeap__mark(ManagedHeap* self) {
             }
         }
 
-        void* ud = PyObject__userdata(obj);
-        switch(obj->type) {
-            case tp_list: {
-                List* self = ud;
-                for(int i = 0; i < self->length; i++) {
-                    py_TValue* val = c11__at(py_TValue, self, i);
-                    pk__mark_value(val);
+        if(obj->type > tp_object) {
+            // NOTE: `defaultdict` -> `dict` -> `object`
+            // NOTE: native types must extend from `object`.
+            py_TypeInfo* ti = pk_typeinfo(obj->type);
+            while(ti->base != tp_object) {
+                ti = ti->base_ti;
+            }
+
+            void* ud = PyObject__userdata(obj);
+            switch(ti->index) {
+                case tp_list: {
+                    List* self = ud;
+                    for(int i = 0; i < self->length; i++) {
+                        py_TValue* val = c11__at(py_TValue, self, i);
+                        pk__mark_value(val);
+                    }
+                    break;
                 }
-                break;
-            }
-            case tp_dict: {
-                Dict* self = ud;
-                for(int i = 0; i < self->entries.length; i++) {
-                    DictEntry* entry = c11__at(DictEntry, &self->entries, i);
-                    if(py_isnil(&entry->key)) continue;
-                    pk__mark_value(&entry->key);
-                    pk__mark_value(&entry->val);
+                case tp_dict: {
+                    Dict* self = ud;
+                    for(int i = 0; i < self->entries.length; i++) {
+                        DictEntry* entry = c11__at(DictEntry, &self->entries, i);
+                        if(py_isnil(&entry->key)) continue;
+                        pk__mark_value(&entry->key);
+                        pk__mark_value(&entry->val);
+                    }
+                    break;
                 }
-                break;
-            }
-            case tp_generator: {
-                Generator* self = ud;
-                if(self->frame) Frame__gc_mark(self->frame, p_stack);
-                break;
-            }
-            case tp_function: {
-                function__gc_mark(ud, p_stack);
-                break;
-            }
-            case tp_BaseException: {
-                BaseException* self = ud;
-                pk__mark_value(&self->args);
-                pk__mark_value(&self->inner_exc);
-                c11__foreach(BaseExceptionFrame, &self->stacktrace, frame) {
-                    pk__mark_value(&frame->locals);
-                    pk__mark_value(&frame->globals);
+                case tp_generator: {
+                    Generator* self = ud;
+                    if(self->frame) Frame__gc_mark(self->frame, p_stack);
+                    break;
                 }
-                break;
-            }
-            case tp_code: {
-                CodeObject* self = ud;
-                CodeObject__gc_mark(self, p_stack);
-                break;
-            }
-            case tp_chunked_array2d: {
-                c11_chunked_array2d__mark(ud, p_stack);
-                break;
+                case tp_function: {
+                    function__gc_mark(ud, p_stack);
+                    break;
+                }
+                case tp_BaseException: {
+                    BaseException* self = ud;
+                    pk__mark_value(&self->args);
+                    pk__mark_value(&self->inner_exc);
+                    c11__foreach(BaseExceptionFrame, &self->stacktrace, frame) {
+                        pk__mark_value(&frame->locals);
+                        pk__mark_value(&frame->globals);
+                    }
+                    break;
+                }
+                case tp_code: {
+                    CodeObject* self = ud;
+                    CodeObject__gc_mark(self, p_stack);
+                    break;
+                }
+                case tp_chunked_array2d: {
+                    c11_chunked_array2d__mark(ud, p_stack);
+                    break;
+                }
             }
         }
     }

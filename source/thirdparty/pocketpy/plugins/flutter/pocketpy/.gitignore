@@ -28,5 +28,6 @@ migrate_working_dir/
 .dart_tool/
 build/
 
-src/pocketpy.h
-src/pocketpy.c
+ios/pocketpy/
+macos/pocketpy/
+

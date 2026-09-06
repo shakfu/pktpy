@@ -14,14 +14,9 @@ class TValue[T]:
     
 configmacros: dict[str, int]
 
-def memory_usage() -> str:
-    """Return a summary of the memory usage."""
+def memory_usage_info() -> str: ...
+def memory_usage() -> int: ...
 
-def is_user_defined_type(t: type) -> bool:
-    """Check if a type is user-defined. This means the type was created by executing python `class` statement."""
-
-def enable_full_buffering_mode() -> None:
-    """Enable full buffering mode for ASCII drawings."""
 
 def currentvm() -> int:
     """Return the current VM index."""

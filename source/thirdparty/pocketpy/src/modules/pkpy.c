@@ -37,39 +37,43 @@ DEF_TVALUE_METHODS(float, _f64)
 DEF_TVALUE_METHODS(vec2, _vec2)
 DEF_TVALUE_METHODS(vec2i, _vec2i)
 
+
 static bool pkpy_memory_usage(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(0);
+    ManagedHeap* heap = &pk_current_vm->heap;
+    py_i64 size = MultiPool__total_allocated_bytes(&heap->small_objects);
+    size += heap->large_total_size;
+    size += sizeof(VM);
+    py_newint(py_retval(), size);
+    return true;
+}
+
+static bool pkpy_memory_usage_info(int argc, py_Ref argv) {
     PY_CHECK_ARGC(0);
     ManagedHeap* heap = &pk_current_vm->heap;
     c11_string* small_objects_usage = MultiPool__summary(&heap->small_objects);
     int large_object_count = heap->large_objects.length;
     c11_sbuf buf;
     c11_sbuf__ctor(&buf);
+    c11_sbuf__write_cstr(&buf, "== pre-allocated ==\n");
+    double vm_size_mb = sizeof(VM) / 1024.0 / 1024.0;
+    c11_sbuf__write_cstr(&buf, "VM: ");
+    c11_sbuf__write_f64(&buf, vm_size_mb, 2);
+    c11_sbuf__write_cstr(&buf, " MB\n");
     c11_sbuf__write_cstr(&buf, "== heap.small_objects ==\n");
     c11_sbuf__write_cstr(&buf, small_objects_usage->data);
     c11_sbuf__write_cstr(&buf, "== heap.large_objects ==\n");
     pk_sprintf(&buf, "len(large_objects)=%d\n", large_object_count);
+    double large_total_size_mb = (size_t)(heap->large_total_size / 1024) / 1024.0;
+    c11_sbuf__write_cstr(&buf, "Total: ~");
+    c11_sbuf__write_f64(&buf, large_total_size_mb, 2);
+    c11_sbuf__write_cstr(&buf, " MB\n");
     c11_sbuf__write_cstr(&buf, "== heap.gc ==\n");
     pk_sprintf(&buf, "gc_counter=%d\n", heap->gc_counter);
     pk_sprintf(&buf, "gc_threshold=%d", heap->gc_threshold);
     // c11_sbuf__write_cstr(&buf, "== vm.pool_frame ==\n");
     c11_sbuf__py_submit(&buf, py_retval());
     c11_string__delete(small_objects_usage);
-    return true;
-}
-
-static bool pkpy_is_user_defined_type(int argc, py_Ref argv) {
-    PY_CHECK_ARGC(1);
-    PY_CHECK_ARG_TYPE(0, tp_type);
-    py_TypeInfo* ti = py_touserdata(argv);
-    py_newbool(py_retval(), ti->is_python);
-    return true;
-}
-
-static bool pkpy_enable_full_buffering_mode(int argc, py_Ref argv) {
-    PY_CHECK_ARGC(0);
-    static char buf[1024 * 128];
-    setvbuf(stdout, buf, _IOFBF, sizeof(buf));
-    py_newnone(py_retval());
     return true;
 }
 
@@ -228,7 +232,7 @@ static bool ComputeThread_wait_for_done(int argc, py_Ref argv) {
     PY_CHECK_ARGC(1);
     c11_ComputeThread* self = py_touserdata(argv);
     while(!atomic_load(&self->is_done)) {
-        c11_thrd_yield();
+        c11_thrd__yield();
     }
     py_newnone(py_retval());
     return true;
@@ -324,7 +328,7 @@ static bool ComputeThread_submit_exec(int argc, py_Ref argv) {
     c11_ComputeThread__reset_job(self, job, ComputeThreadJobExec__dtor);
     /**************************/
     atomic_store(&self->is_done, false);
-    bool ok = c11_thrd_create(&self->thread, ComputeThreadJob_exec, job);
+    bool ok = c11_thrd__create(&self->thread, ComputeThreadJob_exec, job);
     if(!ok) {
         atomic_store(&self->is_done, true);
         return OSError("thrd_create() failed");
@@ -347,7 +351,7 @@ static bool ComputeThread_submit_eval(int argc, py_Ref argv) {
     c11_ComputeThread__reset_job(self, job, ComputeThreadJobExec__dtor);
     /**************************/
     atomic_store(&self->is_done, false);
-    bool ok = c11_thrd_create(&self->thread, ComputeThreadJob_exec, job);
+    bool ok = c11_thrd__create(&self->thread, ComputeThreadJob_exec, job);
     if(!ok) {
         atomic_store(&self->is_done, true);
         return OSError("thrd_create() failed");
@@ -384,7 +388,7 @@ static bool ComputeThread_submit_call(int argc, py_Ref argv) {
     c11_ComputeThread__reset_job(self, job, ComputeThreadJobCall__dtor);
     /**************************/
     atomic_store(&self->is_done, false);
-    bool ok = c11_thrd_create(&self->thread, ComputeThreadJob_call, job);
+    bool ok = c11_thrd__create(&self->thread, ComputeThreadJob_call, job);
     if(!ok) {
         atomic_store(&self->is_done, true);
         return OSError("thrd_create() failed");
@@ -538,8 +542,7 @@ void pk__add_module_pkpy() {
     py_pop();
 
     py_bindfunc(mod, "memory_usage", pkpy_memory_usage);
-    py_bindfunc(mod, "is_user_defined_type", pkpy_is_user_defined_type);
-    py_bindfunc(mod, "enable_full_buffering_mode", pkpy_enable_full_buffering_mode);
+    py_bindfunc(mod, "memory_usage_info", pkpy_memory_usage_info);
 
     py_bindfunc(mod, "currentvm", pkpy_currentvm);
 

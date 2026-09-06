@@ -59,7 +59,7 @@ static void PickleObject__dtor(PickleObject* self) {
 static bool PickleObject__py_submit(PickleObject* self, py_OutRef out);
 
 static void PickleObject__write_bytes(PickleObject* buf, const void* data, int size) {
-    c11_vector__extend(char, &buf->codes, data, size);
+    c11_vector__extend(&buf->codes, data, size);
 }
 
 static void c11_sbuf__write_type_path(c11_sbuf* path_buf, py_Type type) {
@@ -409,13 +409,14 @@ static bool pkl__write_object(PickleObject* buf, py_TValue* obj) {
                 if(!py_call(f_reduce, 1, obj)) return false;
                 // expected: (callable, args)
                 py_Ref reduced = py_retval();
-                if(!py_istuple(reduced)) { return TypeError("__reduce__ must return a tuple"); }
+                if(!py_istuple(reduced)) return TypeError("__reduce__ must return a tuple");
                 if(py_tuple_len(reduced) != 2) {
                     return TypeError("__reduce__ must return a tuple of length 2");
                 }
                 if(!pkl__write_object(buf, py_tuple_getitem(reduced, 0))) return false;
                 pkl__emit_op(buf, PKL_NIL);
                 py_Ref args_tuple = py_tuple_getitem(reduced, 1);
+                if(!py_istuple(args_tuple)) return TypeError("__reduce__ args must be a tuple");
                 int args_length = py_tuple_len(args_tuple);
                 for(int i = 0; i < args_length; i++) {
                     if(!pkl__write_object(buf, py_tuple_getitem(args_tuple, i))) return false;
@@ -501,10 +502,10 @@ bool py_pickle_loads_body(const unsigned char* p, int memo_length, c11_smallmap_
 bool py_pickle_loads(const unsigned char* data, int size) {
     const unsigned char* p = data;
 
-    // \xf0\x9f\xa5\x95
-    if(size < 4 || p[0] != 240 || p[1] != 159 || p[2] != 165 || p[3] != 149)
+    // PK
+    if(size < 2 || p[0] != 'P' || p[1] != 'K')
         return ValueError("invalid pickle data");
-    p += 4;
+    p += 2;
 
     c11_smallmap_d2d type_mapping;
     c11_smallmap_d2d__ctor(&type_mapping);
@@ -780,7 +781,7 @@ bool py_pickle_loads_body(const unsigned char* p, int memo_length, c11_smallmap_
 static bool PickleObject__py_submit(PickleObject* self, py_OutRef out) {
     c11_sbuf cleartext;
     c11_sbuf__ctor(&cleartext);
-    c11_sbuf__write_cstr(&cleartext, "\xf0\x9f\xa5\x95");
+    c11_sbuf__write_cstr(&cleartext, "PK");
     // line 1: type mapping
     for(py_Type type = 0; type < self->used_types_length; type++) {
         if(self->used_types[type]) {
